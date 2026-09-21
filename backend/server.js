@@ -5,15 +5,36 @@ require("dotenv").config();
 
 const app = express();
 
+// MIDDLEWARE
+
 app.use(cors());
+
 app.use(express.json());
 
+// RUTAS
 
 const authRoutes = require("./routes/auth.routes");
 
-app.use("/api/auth", authRoutes);
+const employeesRoutes = require("./routes/employees.routes");
 
 
-app.listen(3000, ()=>{
-    console.log("Servidor corriendo en puerto 3000");
+app.use(
+    "/api/auth",
+    authRoutes
+);
+
+
+app.use(
+    "/api/employees",
+    employeesRoutes
+);
+
+
+// SERVIDOR
+app.listen(3000, () => {
+
+    console.log(
+        "Servidor corriendo en puerto 3000"
+    );
+
 });

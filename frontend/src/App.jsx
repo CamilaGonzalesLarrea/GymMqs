@@ -1,43 +1,42 @@
 import {
-BrowserRouter,
-Routes,
-Route
+    BrowserRouter,
+    Routes,
+    Route
 } from "react-router-dom";
-
 
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
+import Employees from "./pages/Employees";
 
+function App() {
 
-function App(){
+    return (
 
+        <BrowserRouter>
 
-return(
+            <Routes>
 
-<BrowserRouter>
+                <Route
+                    path="/"
+                    element={<Login />}
+                />
 
-<Routes>
+                <Route
+                    path="/dashboard"
+                    element={<Dashboard />}
+                />
 
+                <Route
+                    path="/employees"
+                    element={<Employees />}
+                />
 
-<Route
-path="/"
-element={<Login/>}
-/>
+            </Routes>
 
+        </BrowserRouter>
 
-<Route
-path="/dashboard"
-element={<Dashboard/>}
-/>
-
-
-</Routes>
-
-</BrowserRouter>
-
-)
+    );
 
 }
-
 
 export default App;

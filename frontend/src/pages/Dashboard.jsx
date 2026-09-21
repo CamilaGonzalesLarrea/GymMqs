@@ -1,185 +1,157 @@
+import Sidebar from "../components/Sidebar";
 import "./Dashboard.css";
 
 function Dashboard() {
 
     return (
 
-        <div className="dashboard">
+        <div className="dashboard-page">
 
-            <aside className="sidebar">
-
-                <img
-                    src="/images/logo.jpg"
-                    className="logo"
-                    alt="Logo MQS"
-                />
-
-                <div className="brand">
-                    <h2>MQS</h2>
-                    <span>Recursos Humanos</span>
-                </div>
-
-                <nav className="menu">
-
-                    <button>
-                        <span>👥</span>
-                        Empleados
-                    </button>
-
-                    <button>
-                        <span>💼</span>
-                        Cargos
-                    </button>
-
-                    <button>
-                        <span>🕒</span>
-                        Turnos
-                    </button>
-
-                    <button>
-                        <span>📅</span>
-                        Asistencia
-                    </button>
-
-                    <button>
-                        <span>🏋</span>
-                        Entrenadores
-                    </button>
-
-                    <button>
-                        <span>📊</span>
-                        Reportes
-                    </button>
-
-                </nav>
-
-            </aside>
+            <Sidebar />
 
 
-            <main className="content">
+            <main className="dashboard-content">
 
                 <header className="dashboard-header">
 
                     <div>
-                        <p className="section-name">
+
+                        <span>
                             RECURSOS HUMANOS
-                        </p>
+                        </span>
 
                         <h1>
                             Dashboard
                         </h1>
 
-                        <p className="welcome">
+                        <p>
                             Gestión del personal del Gimnasio MQS
                         </p>
+
                     </div>
 
-                    <div className="user-info">
-                        <div className="user-avatar">
+
+                    <div className="dashboard-user">
+
+                        <div className="user-circle">
                             A
                         </div>
 
                         <div>
-                            <strong>Administrador</strong>
-                            <span>Usuario activo</span>
+                            <strong>
+                                Administrador
+                            </strong>
+
+                            <small>
+                                Usuario activo
+                            </small>
                         </div>
+
                     </div>
 
                 </header>
 
 
-                <section className="cards">
+                <section className="dashboard-cards">
 
-                    <div className="card">
+                    <div className="dashboard-card">
 
-                        <div className="card-icon">
-                            👥
-                        </div>
+                        <span>
+                            Empleados
+                        </span>
 
-                        <div>
-                            <span>Empleados</span>
-                            <strong>15</strong>
-                            <small>Personal registrado</small>
-                        </div>
+                        <strong>
+                            15
+                        </strong>
 
-                    </div>
-
-
-                    <div className="card">
-
-                        <div className="card-icon">
-                            🕒
-                        </div>
-
-                        <div>
-                            <span>Turnos activos</span>
-                            <strong>24</strong>
-                            <small>Horarios asignados</small>
-                        </div>
+                        <small>
+                            Personal registrado
+                        </small>
 
                     </div>
 
 
-                    <div className="card">
+                    <div className="dashboard-card">
 
-                        <div className="card-icon">
-                            📅
-                        </div>
+                        <span>
+                            Turnos
+                        </span>
 
-                        <div>
-                            <span>Asistencia</span>
-                            <strong>98%</strong>
-                            <small>Cumplimiento actual</small>
-                        </div>
+                        <strong>
+                            24
+                        </strong>
+
+                        <small>
+                            Horarios registrados
+                        </small>
+
+                    </div>
+
+
+                    <div className="dashboard-card">
+
+                        <span>
+                            Asistencia
+                        </span>
+
+                        <strong>
+                            98%
+                        </strong>
+
+                        <small>
+                            Cumplimiento actual
+                        </small>
 
                     </div>
 
                 </section>
 
 
-                <section className="dashboard-grid">
+                <section className="dashboard-panels">
 
-                    <div className="panel">
+                    <div className="dashboard-panel">
 
-                        <div className="panel-header">
+                        <h2>
+                            Actividad reciente
+                        </h2>
+
+                        <p>
+                            Registros recientes del personal
+                        </p>
+
+
+                        <div className="activity">
 
                             <div>
-                                <h2>Actividad reciente</h2>
-                                <p>Últimos movimientos del personal</p>
-                            </div>
+                                <strong>
+                                    Registro de empleados
+                                </strong>
 
-                        </div>
-
-
-                        <div className="activity-list">
-
-                            <div className="activity-item">
-                                <div className="activity-dot"></div>
-
-                                <div>
-                                    <strong>Nuevo empleado registrado</strong>
-                                    <span>Registro realizado recientemente</span>
-                                </div>
+                                <span>
+                                    Información del personal registrada.
+                                </span>
                             </div>
 
 
-                            <div className="activity-item">
-                                <div className="activity-dot"></div>
+                            <div>
+                                <strong>
+                                    Control de turnos
+                                </strong>
 
-                                <div>
-                                    <strong>Turno actualizado</strong>
-                                    <span>Se modificó un horario de trabajo</span>
-                                </div>
+                                <span>
+                                    Horarios asignados al personal.
+                                </span>
                             </div>
 
 
-                            <div className="activity-item">
-                                <div className="activity-dot"></div>
+                            <div>
+                                <strong>
+                                    Control de asistencia
+                                </strong>
 
-                                <div>
-                                    <strong>Asistencia registrada</strong>
-                                    <span>Control de entrada y salida</span>
-                                </div>
+                                <span>
+                                    Registro de entrada y salida.
+                                </span>
                             </div>
 
                         </div>
@@ -187,20 +159,27 @@ function Dashboard() {
                     </div>
 
 
-                    <div className="panel quick-panel">
+                    <div className="dashboard-panel">
 
-                        <h2>Acciones rápidas</h2>
+                        <h2>
+                            Acciones rápidas
+                        </h2>
+
+                        <p>
+                            Operaciones frecuentes
+                        </p>
+
 
                         <button>
-                            + Registrar empleado
+                            Registrar empleado
                         </button>
 
                         <button>
-                            + Asignar turno
+                            Asignar turno
                         </button>
 
                         <button>
-                            Ver asistencia
+                            Consultar asistencia
                         </button>
 
                     </div>
