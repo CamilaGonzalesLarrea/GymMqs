@@ -8,6 +8,10 @@ import {
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Employees from './pages/Employees';
+import Positions from './pages/Positions';
+import Shifts from './pages/Shifts';
+import Attendance from './pages/Attendance';
+import Reports from './pages/Reports';
 import Operations from './pages/Operations';
 
 const ADMIN_ROLES = [
@@ -284,6 +288,58 @@ function App() {
               }
             >
               <Employees />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/positions"
+          element={
+            <ProtectedRoute
+              allowedRoles={
+                adminAndHrRoles
+              }
+            >
+              <Positions />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/shifts"
+          element={
+            <ProtectedRoute
+              allowedRoles={
+                adminAndHrRoles
+              }
+            >
+              <Shifts />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/attendance"
+          element={
+            <ProtectedRoute
+              allowedRoles={
+                adminAndHrRoles
+              }
+            >
+              <Attendance />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/reports"
+          element={
+            <ProtectedRoute
+              allowedRoles={
+                adminAndHrRoles
+              }
+            >
+              <Reports />
             </ProtectedRoute>
           }
         />

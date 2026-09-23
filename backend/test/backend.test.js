@@ -33,7 +33,7 @@ function sqlQueue(steps) {
 test('root, CORS, 404 and all four list routes',async()=>{
  const db={async query(sql){return [sql.startsWith('UPDATE')?{affectedRows:0}:[]];}};
  await http(db,async request=>{
-  const root=await request('GET','/');assert.equal(root.data,'Hello World!');assert.equal(root.headers.get('access-control-allow-origin'),'*');
+  const root=await request('GET','/');assert.equal(root.data,'Gimnasio MQS API');assert.equal(root.headers.get('access-control-allow-origin'),'*');
   for(const path of ['/customers','/membership-plans','/memberships','/customer-attendances']) {const r=await request('GET',path);assert.equal(r.status,200);assert.deepEqual(r.data,[]);}
   assert.equal((await request('GET','/missing')).status,404);
  });
@@ -179,4 +179,63 @@ test('plan validations match existing MySQL varchar limits',async()=>{
  await http({query:async()=>{throw new Error('Must not query');}},async request=>{
   for(const body of [{plan_name:'x'.repeat(51),duration_days:30,price:'20.00'},{plan_name:'Plan',duration_days:30,price:'20.00',description:'x'.repeat(256)}]) assert.equal((await request('POST','/membership-plans',body)).status,400);
  });
+});
+
+test('HR endpoints exist and return the expected payloads',async()=>{
+ const db={query:async(sql,params)=>{
+  if (sql.includes('FROM employees')) return [[{id_employee:1,first_name:'Ana',last_name:'Pérez',id_position:2,phone:'999999',email:'ana@test.com',hire_date:'2024-01-10',status:'ACTIVE',position_name:'Recepcionista'}]];
+  if (sql.includes('FROM positions')) return [[{id_position:2,name:'Recepcionista',description:'Atención al cliente',status:'ACTIVE'}]];
+  if (sql.includes('FROM work_shifts')) return [[{id_shift:1,id_employee:1,day:'LUNES',start_time:'08:00:00',end_time:'16:00:00',status:'ACTIVE'}]];
+  if (sql.includes('FROM employee_attendance')) return [[{id_employee_attendance:1,id_employee:1,id_shift:1,date:'2026-09-23',entry_time:'08:00:00',exit_time:'16:00:00',notes:''}]];
+  if (sql.includes('INSERT INTO employees')) return [{insertId:9}];
+  if (sql.includes('INSERT INTO positions')) return [{insertId:3}];
+  if (sql.includes('INSERT INTO work_shifts')) return [{insertId:4}];
+  if (sql.includes('INSERT INTO employee_attendance')) return [{insertId:5}];
+  if (sql.includes('UPDATE employees')) return [{affectedRows:1}];
+  if (sql.includes('UPDATE positions')) return [{affectedRows:1}];
+  if (sql.includes('UPDATE work_shifts')) return [{affectedRows:1}];
+  if (sql.includes('UPDATE employee_attendance')) return [{affectedRows:1}];
+  return [[]];
+ }};
+ await http(db,async request=>{
+  const employees=await request('GET','/api/employees');assert.equal(employees.status,200);assert.equal(Array.isArray(employees.data),true);
+  const positions=await request('GET','/api/positions');assert.equal(positions.status,200);assert.equal(Array.isArray(positions.data),true);
+  const shifts=await request('GET','/api/shifts');assert.equal(shifts.status,200);assert.equal(Array.isArray(shifts.data),true);
+  const attendance=await request('GET','/api/employee-attendance');assert.equal(attendance.status,200);assert.equal(Array.isArray(attendance.data),true);
+  assert.equal((await request('POST','/api/employees',{first_name:'Ana',last_name:'Pérez',phone:'999999',email:'ana@test.com',id_position:2,hire_date:'2024-01-10',status:'ACTIVE'})).status,201);
+  assert.equal((await request('POST','/api/positions',{name:'Recepcionista',description:'Atención al cliente',status:'ACTIVE'})).status,201);
+  assert.equal((await request('POST','/api/shifts',{id_employee:1,day:'LUNES',start_time:'08:00:00',end_time:'16:00:00',status:'ACTIVE'})).status,201);
+  assert.equal((await request('POST','/api/employee-attendance',{id_employee:1,id_shift:1,date:'2026-09-23',entry_time:'08:00:00',exit_time:'16:00:00',notes:'OK'})).status,201);
+  assert.equal((await request('PATCH','/api/employees/1/status',{status:'INACTIVE'})).status,200);
+  assert.equal((await request('PUT','/api/positions/2',{name:'Recepcionista',description:'Atención al cliente',status:'ACTIVE'})).status,200);
+  assert.equal((await request('PUT','/api/shifts/1',{id_employee:1,day:'MARTES',start_time:'08:00:00',end_time:'16:00:00',status:'ACTIVE'})).status,200);
+  assert.equal((await request('PUT','/api/employee-attendance/1',{id_employee:1,id_shift:1,date:'2026-09-23',entry_time:'08:00:00',exit_time:'16:30:00',notes:'OK'})).status,200);
+ });
+});
+
+test('HR attendance routes target the actual MySQL table name and columns',async()=>{
+ const calls=[];
+ const db={query:async(sql,params)=>{
+  calls.push(sql);
+  if (sql.includes('INFORMATION_SCHEMA.COLUMNS')) {
+   return [[{COLUMN_NAME:'id_employee_attendance'},{COLUMN_NAME:'id_employee'},{COLUMN_NAME:'id_shift'},{COLUMN_NAME:'attendance_date'},{COLUMN_NAME:'check_in'},{COLUMN_NAME:'check_out'},{COLUMN_NAME:'notes'}]];
+  }
+  if (sql.includes('FROM employee_attendances')) return [[{id_employee_attendance:1,id_employee:1,id_shift:1,attendance_date:'2026-09-23',check_in:'08:00:00',check_out:'16:00:00',notes:'OK'}]];
+  if (sql.includes('INSERT INTO employee_attendances')) return [{insertId:5}];
+  if (sql.includes('UPDATE employee_attendances')) return [{affectedRows:1}];
+  return [[]];
+ }};
+
+ await http(db,async request=>{
+  const list=await request('GET','/api/employee-attendance');
+  assert.equal(list.status,200);
+  const created=await request('POST','/api/employee-attendance',{id_employee:1,id_shift:1,date:'2026-09-23',entry_time:'08:00:00',exit_time:'16:00:00',notes:'OK'});
+  assert.equal(created.status,201);
+  const updated=await request('PUT','/api/employee-attendance/1',{id_employee:1,id_shift:1,date:'2026-09-23',entry_time:'08:00:00',exit_time:'16:30:00',notes:'OK'});
+  assert.equal(updated.status,200);
+ });
+
+ assert.ok(calls.some((sql)=>sql.includes('FROM employee_attendances')));
+ assert.ok(calls.some((sql)=>sql.includes('INSERT INTO employee_attendances')));
+ assert.ok(calls.some((sql)=>sql.includes('UPDATE employee_attendances')));
 });

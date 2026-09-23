@@ -271,15 +271,6 @@ function Dashboard() {
                 </span>
               </div>
 
-              <div>
-                <strong>
-                  Entrenadores
-                </strong>
-
-                <span>
-                  Consulta y gestión de entrenadores.
-                </span>
-              </div>
             </div>
           </div>
 
@@ -326,15 +317,6 @@ function Dashboard() {
               }
             >
               Consultar asistencia
-            </button>
-
-            <button
-              type="button"
-              onClick={() =>
-                navigate('/trainers')
-              }
-            >
-              Gestionar entrenadores
             </button>
 
             <button

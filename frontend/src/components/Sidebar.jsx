@@ -107,13 +107,6 @@ function Sidebar() {
         </NavLink>
 
         <NavLink
-          to="/trainers"
-          className={getNavClass}
-        >
-          Entrenadores
-        </NavLink>
-
-        <NavLink
           to="/reports"
           className={getNavClass}
         >

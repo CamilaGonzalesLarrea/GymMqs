@@ -6,7 +6,8 @@ const router = express.Router();
 const {
     getEmployees,
     getPositions,
-    createEmployee
+    createEmployee,
+    updateEmployee
 } = require("../controllers/employees.controller");
 
 
@@ -31,6 +32,12 @@ router.get(
 router.post(
     "/",
     createEmployee
+);
+
+
+router.put(
+    "/:id",
+    updateEmployee
 );
 
 
