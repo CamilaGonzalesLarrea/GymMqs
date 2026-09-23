@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
+import { API_URL } from '../config/api';
 import './Dashboard.css';
-
-const API_URL = 'http://localhost:3000';
 
 function Dashboard() {
   const navigate = useNavigate();

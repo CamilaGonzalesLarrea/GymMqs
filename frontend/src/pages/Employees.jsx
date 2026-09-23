@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
 
 import Sidebar from "../components/Sidebar";
+import { API_URL } from "../config/api";
 
 import "./Employees.css";
-
-const API_URL = "http://localhost:3000";
 
 const emptyForm = {
     first_name: "",
