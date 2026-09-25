@@ -11,6 +11,8 @@ import Employees from './pages/Employees';
 import Positions from './pages/Positions';
 import Shifts from './pages/Shifts';
 import Attendance from './pages/Attendance';
+import Salaries from './pages/Salaries';
+import Payrolls from './pages/Payrolls';
 import Reports from './pages/Reports';
 import Operations from './pages/Operations';
 
@@ -39,10 +41,20 @@ const normalizeRole = (role = '') =>
     .replace(/[_-]+/g, ' ')
     .replace(/\s+/g, ' ');
 
-const roleIsIn = (role, allowedRoles) =>
-  allowedRoles.includes(
-    normalizeRole(role),
-  );
+const normalizeStatus = (status = '') =>
+  String(status)
+    .trim()
+    .toUpperCase();
+
+const roleIsIn = (
+  role,
+  allowedRoles,
+) =>
+  allowedRoles
+    .map(normalizeRole)
+    .includes(
+      normalizeRole(role),
+    );
 
 const getStoredUser = () => {
   try {
@@ -53,12 +65,42 @@ const getStoredUser = () => {
       return null;
     }
 
-    const user = JSON.parse(storedUser);
+    const user =
+      JSON.parse(storedUser);
 
     if (
       !user ||
-      typeof user !== 'object'
+      typeof user !== 'object' ||
+      Array.isArray(user)
     ) {
+      localStorage.removeItem(
+        'user',
+      );
+
+      return null;
+    }
+
+    if (
+      !user.username ||
+      !user.role
+    ) {
+      localStorage.removeItem(
+        'user',
+      );
+
+      return null;
+    }
+
+    if (
+      user.status &&
+      normalizeStatus(
+        user.status,
+      ) === 'INACTIVE'
+    ) {
+      localStorage.removeItem(
+        'user',
+      );
+
       return null;
     }
 
@@ -69,12 +111,23 @@ const getStoredUser = () => {
       error,
     );
 
+    localStorage.removeItem(
+      'user',
+    );
+
     return null;
   }
 };
 
+const clearStoredSession = () => {
+  localStorage.removeItem(
+    'user',
+  );
+};
+
 function RoleHome() {
-  const user = getStoredUser();
+  const user =
+    getStoredUser();
 
   if (!user) {
     return (
@@ -127,9 +180,10 @@ function RoleHome() {
 
 function ProtectedRoute({
   children,
-  allowedRoles,
+  allowedRoles = [],
 }) {
-  const user = getStoredUser();
+  const user =
+    getStoredUser();
 
   if (!user) {
     return (
@@ -140,15 +194,10 @@ function ProtectedRoute({
     );
   }
 
-  const normalizedRole =
-    normalizeRole(user.role);
-
-  const normalizedAllowedRoles =
-    allowedRoles.map(normalizeRole);
-
   if (
-    !normalizedAllowedRoles.includes(
-      normalizedRole,
+    !roleIsIn(
+      user.role,
+      allowedRoles,
     )
   ) {
     return <RoleHome />;
@@ -160,7 +209,8 @@ function ProtectedRoute({
 function PublicOnlyRoute({
   children,
 }) {
-  const user = getStoredUser();
+  const user =
+    getStoredUser();
 
   if (user) {
     return <RoleHome />;
@@ -170,12 +220,15 @@ function PublicOnlyRoute({
 }
 
 function Unauthorized() {
-  const user = getStoredUser();
+  const user =
+    getStoredUser();
 
   const handleLogout = () => {
-    localStorage.removeItem('user');
+    clearStoredSession();
 
-    window.location.replace('/');
+    window.location.replace(
+      '/',
+    );
   };
 
   return (
@@ -185,28 +238,68 @@ function Unauthorized() {
         display: 'grid',
         placeItems: 'center',
         padding: '24px',
+        background: '#0b0b0b',
+        color: '#ffffff',
         fontFamily:
           'Arial, sans-serif',
       }}
     >
       <div
         style={{
-          maxWidth: '520px',
+          width: '100%',
+          maxWidth: '540px',
+          padding: '32px',
           textAlign: 'center',
+          background: '#151515',
+          border:
+            '1px solid #2a2a2a',
+          borderRadius: '14px',
         }}
       >
-        <h1>
+        <div
+          style={{
+            marginBottom: '10px',
+            color: '#e0002d',
+            fontSize: '12px',
+            fontWeight: 700,
+            letterSpacing: '1px',
+          }}
+        >
+          GIMNASIO MQS
+        </div>
+
+        <h1
+          style={{
+            margin:
+              '0 0 14px',
+          }}
+        >
           Acceso no autorizado
         </h1>
 
-        <p>
+        <p
+          style={{
+            margin:
+              '0 0 24px',
+            color: '#a0a0a0',
+            lineHeight: 1.6,
+          }}
+        >
           El usuario{' '}
-          <strong>
+          <strong
+            style={{
+              color: '#ffffff',
+            }}
+          >
             {user?.username ||
               'actual'}
           </strong>{' '}
           tiene el rol{' '}
-          <strong>
+          <strong
+            style={{
+              color: '#ffffff',
+            }}
+          >
             {user?.role ||
               'sin definir'}
           </strong>
@@ -216,7 +309,24 @@ function Unauthorized() {
 
         <button
           type="button"
-          onClick={handleLogout}
+          onClick={
+            handleLogout
+          }
+          style={{
+            padding:
+              '11px 18px',
+            border:
+              '1px solid #333333',
+            borderRadius:
+              '8px',
+            background:
+              '#ffffff',
+            color:
+              '#111111',
+            fontWeight: 700,
+            cursor:
+              'pointer',
+          }}
         >
           Cerrar sesión
         </button>
@@ -250,7 +360,9 @@ function App() {
 
         <Route
           path="/home"
-          element={<RoleHome />}
+          element={
+            <RoleHome />
+          }
         />
 
         <Route
@@ -332,6 +444,32 @@ function App() {
         />
 
         <Route
+          path="/salaries"
+          element={
+            <ProtectedRoute
+              allowedRoles={
+                adminAndHrRoles
+              }
+            >
+              <Salaries />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/payrolls"
+          element={
+            <ProtectedRoute
+              allowedRoles={
+                adminAndHrRoles
+              }
+            >
+              <Payrolls />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
           path="/reports"
           element={
             <ProtectedRoute
@@ -346,12 +484,16 @@ function App() {
 
         <Route
           path="/unauthorized"
-          element={<Unauthorized />}
+          element={
+            <Unauthorized />
+          }
         />
 
         <Route
           path="*"
-          element={<RoleHome />}
+          element={
+            <RoleHome />
+          }
         />
       </Routes>
     </BrowserRouter>

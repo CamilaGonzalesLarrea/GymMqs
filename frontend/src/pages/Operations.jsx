@@ -575,7 +575,30 @@ function Operations() {
       alert(error.message);
     }
   };
+const handleCancelMembershipStatus = async (membership) => {
+  const confirmed = window.confirm(
+    `¿Seguro que deseas cancelar la membresía #${membership.id_membership}?`,
+  );
 
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    await apiRequest(
+      `/memberships/${membership.id_membership}/cancel`,
+      {
+        method: 'PATCH',
+      },
+    );
+
+    await loadMemberships();
+
+    alert('Membresía cancelada correctamente.');
+  } catch (error) {
+    alert(error.message);
+  }
+};
   const handleRenewMembership = (membership) => {
     const customer = customers.find(
       (item) =>
@@ -2453,7 +2476,19 @@ function Operations() {
                             Renovar
                           </button>
                         )}
-
+{(membership.status === 'PENDING' ||
+  membership.status === 'ACTIVE') && (
+  <button
+    className="status-button deactivate-button"
+    onClick={() =>
+      handleCancelMembershipStatus(
+        membership,
+      )
+    }
+  >
+    Cancelar
+  </button>
+)}
                         {membership.status ===
                           'CANCELLED' && (
                           <span className="no-action">

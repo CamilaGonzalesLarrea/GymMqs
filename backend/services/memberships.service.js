@@ -1,36 +1,50 @@
-const { BadRequestException, NotFoundException } = require('../middlewares/errors');
-const { LessThanOrEqual, MoreThanOrEqual, Not } = require('../repositories/mysql.repository');
+const {
+  BadRequestException,
+  NotFoundException,
+} = require('../middlewares/errors');
+
+const {
+  LessThanOrEqual,
+  MoreThanOrEqual,
+  Not,
+} = require('../repositories/mysql.repository');
 
 class MembershipsService {
-  constructor(membershipRepository, customerRepository, membershipPlanRepository) {
+  constructor(
+    membershipRepository,
+    customerRepository,
+    membershipPlanRepository,
+  ) {
     this.membershipRepository = membershipRepository;
     this.customerRepository = customerRepository;
-    this.membershipPlanRepository = membershipPlanRepository;
+    this.membershipPlanRepository =
+      membershipPlanRepository;
   }
 
   // =====================================================
   // FECHAS
   // =====================================================
 
-          parseDate(
-    dateString        ,
-    errorMessage        ,
-  )       {
+  parseDate(dateString, errorMessage) {
     if (
       !dateString ||
-      !/^\d{4}-\d{2}-\d{2}$/.test(dateString)
+      !/^\d{4}-\d{2}-\d{2}$/.test(
+        String(dateString),
+      )
     ) {
       throw new BadRequestException(errorMessage);
     }
 
+    const normalized = String(dateString);
+
     const date = new Date(
-      `${dateString}T00:00:00.000Z`,
+      `${normalized}T00:00:00.000Z`,
     );
 
     if (
       Number.isNaN(date.getTime()) ||
       date.toISOString().split('T')[0] !==
-        dateString
+        normalized
     ) {
       throw new BadRequestException(errorMessage);
     }
@@ -38,11 +52,20 @@ class MembershipsService {
     return date;
   }
 
-          formatDate(date      )         {
+  formatDate(date) {
+    if (
+      !(date instanceof Date) ||
+      Number.isNaN(date.getTime())
+    ) {
+      throw new BadRequestException(
+        'Fecha inválida',
+      );
+    }
+
     return date.toISOString().split('T')[0];
   }
 
-          getToday()         {
+  getToday() {
     const now = new Date();
 
     const year = now.getFullYear();
@@ -51,18 +74,26 @@ class MembershipsService {
       now.getMonth() + 1,
     ).padStart(2, '0');
 
-    const day = String(now.getDate()).padStart(
-      2,
-      '0',
-    );
+    const day = String(
+      now.getDate(),
+    ).padStart(2, '0');
 
     return `${year}-${month}-${day}`;
   }
 
-          calculateEndDate(
-    startDate      ,
-    durationDays        ,
-  )         {
+  calculateEndDate(
+    startDate,
+    durationDays,
+  ) {
+    if (
+      !(startDate instanceof Date) ||
+      Number.isNaN(startDate.getTime())
+    ) {
+      throw new BadRequestException(
+        'La fecha de inicio es inválida',
+      );
+    }
+
     if (
       !Number.isInteger(durationDays) ||
       durationDays <= 0
@@ -75,33 +106,143 @@ class MembershipsService {
     const endDate = new Date(startDate);
 
     endDate.setUTCDate(
-      endDate.getUTCDate() + durationDays - 1,
+      endDate.getUTCDate() +
+        durationDays -
+        1,
     );
 
     return this.formatDate(endDate);
   }
 
   // =====================================================
+  // HELPERS INTERNOS
+  // =====================================================
+
+  normalizeStatus(value) {
+    return String(value || '')
+      .trim()
+      .toUpperCase();
+  }
+
+  async findMembershipById(id) {
+    const membership =
+      await this.membershipRepository.findOne({
+        where: {
+          id_membership: id,
+        },
+      });
+
+    if (!membership) {
+      throw new NotFoundException(
+        'Membresía no encontrada',
+      );
+    }
+
+    return membership;
+  }
+
+  async findActiveCustomer(idCustomer) {
+    const customer =
+      await this.customerRepository.findOne({
+        where: {
+          id_customer: idCustomer,
+        },
+      });
+
+    if (!customer) {
+      throw new NotFoundException(
+        'Cliente no encontrado',
+      );
+    }
+
+    if (
+      this.normalizeStatus(customer.status) !==
+      'ACTIVE'
+    ) {
+      throw new BadRequestException(
+        'El cliente está inactivo',
+      );
+    }
+
+    return customer;
+  }
+
+  async findActivePlan(idPlan) {
+    const plan =
+      await this.membershipPlanRepository.findOne({
+        where: {
+          id_plan: idPlan,
+        },
+      });
+
+    if (!plan) {
+      throw new NotFoundException(
+        'Plan de membresía no encontrado',
+      );
+    }
+
+    if (
+      this.normalizeStatus(plan.status) !==
+      'ACTIVE'
+    ) {
+      throw new BadRequestException(
+        'El plan de membresía está inactivo',
+      );
+    }
+
+    if (
+      !Number.isInteger(
+        Number(plan.duration_days),
+      ) ||
+      Number(plan.duration_days) <= 0
+    ) {
+      throw new BadRequestException(
+        'El plan tiene una duración inválida',
+      );
+    }
+
+    const numericPrice = Number(plan.price);
+
+    if (
+      !Number.isFinite(numericPrice) ||
+      numericPrice < 0
+    ) {
+      throw new BadRequestException(
+        'El plan tiene un precio inválido',
+      );
+    }
+
+    return {
+      ...plan,
+      duration_days: Number(
+        plan.duration_days,
+      ),
+      price: numericPrice,
+    };
+  }
+
+  // =====================================================
   // ACTUALIZAR MEMBRESÍAS VENCIDAS
   // =====================================================
 
-          async updateExpiredMemberships()                {
+  async updateExpiredMemberships() {
     const today = this.getToday();
 
     /*
-      Toda membresía marcada como ACTIVE cuya fecha
-      de vencimiento sea anterior a hoy pasa
-      automáticamente a EXPIRED.
-
-      Ejemplo:
-      end_date = 2026-09-14
-      hoy      = 2026-09-15
-      => EXPIRED
+      Toda membresía ACTIVE cuya fecha de vencimiento
+      sea anterior a hoy pasa automáticamente a EXPIRED.
 
       Si vence hoy, todavía permanece ACTIVE.
+
+      Las membresías CANCELLED nunca deben pasar a
+      EXPIRED porque ya terminaron por cancelación.
+      expireBefore() debe afectar únicamente ACTIVE,
+      como ya está planteado en el repositorio.
     */
 
-    await this.membershipRepository.expireBefore(today);
+    await this.membershipRepository.expireBefore(
+      today,
+    );
   }
 
   // =====================================================
@@ -122,10 +263,10 @@ class MembershipsService {
   // BUSCAR SUPERPOSICIONES
   // =====================================================
 
-          async findOverlappingMembership(
-    idCustomer        ,
-    startDate        ,
-    endDate        ,
+  async findOverlappingMembership(
+    idCustomer,
+    startDate,
+    endDate,
   ) {
     return this.membershipRepository.findOne({
       where: [
@@ -157,86 +298,18 @@ class MembershipsService {
   // CREAR MEMBRESÍA
   // =====================================================
 
-  async create(
-    createMembershipDto                     ,
-  ) {
-    /*
-      Antes de validar superposiciones actualizamos
-      membresías antiguas que ya vencieron.
-    */
+  async create(createMembershipDto) {
     await this.updateExpiredMemberships();
 
-    // ---------------------------------------------------
-    // CLIENTE
-    // ---------------------------------------------------
-
     const customer =
-      await this.customerRepository.findOne({
-        where: {
-          id_customer:
-            createMembershipDto.id_customer,
-        },
-      });
-
-    if (!customer) {
-      throw new NotFoundException(
-        'Cliente no encontrado',
+      await this.findActiveCustomer(
+        createMembershipDto.id_customer,
       );
-    }
-
-    if (customer.status !== 'ACTIVE') {
-      throw new BadRequestException(
-        'El cliente está inactivo',
-      );
-    }
-
-    // ---------------------------------------------------
-    // PLAN
-    // ---------------------------------------------------
 
     const plan =
-      await this.membershipPlanRepository.findOne({
-        where: {
-          id_plan:
-            createMembershipDto.id_plan,
-        },
-      });
-
-    if (!plan) {
-      throw new NotFoundException(
-        'Plan de membresía no encontrado',
+      await this.findActivePlan(
+        createMembershipDto.id_plan,
       );
-    }
-
-    if (plan.status !== 'ACTIVE') {
-      throw new BadRequestException(
-        'El plan de membresía está inactivo',
-      );
-    }
-
-    if (
-      !Number.isInteger(plan.duration_days) ||
-      plan.duration_days <= 0
-    ) {
-      throw new BadRequestException(
-        'El plan tiene una duración inválida',
-      );
-    }
-
-    const numericPrice = Number(plan.price);
-
-    if (
-      Number.isNaN(numericPrice) ||
-      numericPrice < 0
-    ) {
-      throw new BadRequestException(
-        'El plan tiene un precio inválido',
-      );
-    }
-
-    // ---------------------------------------------------
-    // FECHAS
-    // ---------------------------------------------------
 
     const startDate = this.parseDate(
       createMembershipDto.start_date,
@@ -252,10 +325,6 @@ class MembershipsService {
         plan.duration_days,
       );
 
-    // ---------------------------------------------------
-    // SUPERPOSICIONES
-    // ---------------------------------------------------
-
     const overlappingMembership =
       await this.findOverlappingMembership(
         customer.id_customer,
@@ -269,15 +338,10 @@ class MembershipsService {
       );
     }
 
-    // ---------------------------------------------------
-    // GUARDAR
-    // ---------------------------------------------------
-
     const membership =
       this.membershipRepository.create({
         id_customer: customer.id_customer,
         id_plan: plan.id_plan,
-
         start_date: startDateString,
         end_date: endDateString,
 
@@ -288,9 +352,7 @@ class MembershipsService {
         applied_price: plan.price,
 
         /*
-          Una nueva membresía inicia como pendiente.
-          Posteriormente podrá activarse respetando
-          el flujo correspondiente.
+          Toda nueva membresía comienza PENDING.
         */
         status: 'PENDING',
       });
@@ -305,133 +367,53 @@ class MembershipsService {
   // =====================================================
 
   async renew(
-    id        ,
-    renewMembershipDto                    ,
+    id,
+    renewMembershipDto = {},
   ) {
-    /*
-      Es importante actualizar vencimientos ANTES
-      de consultar la membresía.
-
-      Así una membresía cuya fecha ya terminó
-      pasa a EXPIRED y se renueva utilizando
-      correctamente la lógica de membresía vencida.
-    */
     await this.updateExpiredMemberships();
 
     const currentMembership =
-      await this.membershipRepository.findOne({
-        where: {
-          id_membership: id,
-        },
-      });
+      await this.findMembershipById(id);
 
-    if (!currentMembership) {
-      throw new NotFoundException(
-        'Membresía no encontrada',
+    const currentStatus =
+      this.normalizeStatus(
+        currentMembership.status,
       );
-    }
 
     if (
-      currentMembership.status !== 'ACTIVE' &&
-      currentMembership.status !== 'EXPIRED'
+      currentStatus !== 'ACTIVE' &&
+      currentStatus !== 'EXPIRED'
     ) {
+      if (currentStatus === 'CANCELLED') {
+        throw new BadRequestException(
+          'No se puede renovar una membresía cancelada. Debe registrarse una nueva membresía.',
+        );
+      }
+
       throw new BadRequestException(
         'Solo se pueden renovar membresías activas o vencidas',
       );
     }
 
-    // ---------------------------------------------------
-    // CLIENTE
-    // ---------------------------------------------------
-
     const customer =
-      await this.customerRepository.findOne({
-        where: {
-          id_customer:
-            currentMembership.id_customer,
-        },
-      });
-
-    if (!customer) {
-      throw new NotFoundException(
-        'Cliente no encontrado',
+      await this.findActiveCustomer(
+        currentMembership.id_customer,
       );
-    }
 
-    if (customer.status !== 'ACTIVE') {
-      throw new BadRequestException(
-        'El cliente está inactivo',
-      );
-    }
-
-    // ---------------------------------------------------
-    // PLAN
-    // ---------------------------------------------------
-
-    /*
-      Si desde el frontend se envía id_plan,
-      se utiliza el nuevo plan.
-
-      Si no se envía, se conserva el plan anterior.
-    */
     const planId =
       renewMembershipDto.id_plan ??
       currentMembership.id_plan;
 
     const plan =
-      await this.membershipPlanRepository.findOne({
-        where: {
-          id_plan: planId,
-        },
-      });
+      await this.findActivePlan(planId);
 
-    if (!plan) {
-      throw new NotFoundException(
-        'Plan de membresía no encontrado',
-      );
-    }
+    let startDate;
 
-    if (plan.status !== 'ACTIVE') {
-      throw new BadRequestException(
-        'El plan de membresía está inactivo',
-      );
-    }
-
-    if (
-      !Number.isInteger(plan.duration_days) ||
-      plan.duration_days <= 0
-    ) {
-      throw new BadRequestException(
-        'El plan tiene una duración inválida',
-      );
-    }
-
-    const numericPrice = Number(plan.price);
-
-    if (
-      Number.isNaN(numericPrice) ||
-      numericPrice < 0
-    ) {
-      throw new BadRequestException(
-        'El plan tiene un precio inválido',
-      );
-    }
-
-    // ---------------------------------------------------
-    // CALCULAR NUEVA FECHA DE INICIO
-    // ---------------------------------------------------
-
-    let startDate      ;
-
-    if (
-      currentMembership.status === 'ACTIVE'
-    ) {
+    if (currentStatus === 'ACTIVE') {
       /*
-        Si todavía está activa, la renovación
-        comienza exactamente el día siguiente
-        a su vencimiento actual.
+        Si todavía está activa, la renovación empieza
+        el día siguiente a su fecha de vencimiento.
       */
-
       startDate = this.parseDate(
         currentMembership.end_date,
         'Fecha de vencimiento inválida',
@@ -442,11 +424,9 @@ class MembershipsService {
       );
     } else {
       /*
-        Si ya venció, comienza en la fecha indicada
-        por el usuario o, si no se indicó ninguna,
-        en la fecha actual.
+        Si ya está vencida, comienza en la fecha
+        indicada o, si no se envía, hoy.
       */
-
       const renewalDate =
         renewMembershipDto.renewal_date ??
         this.getToday();
@@ -466,13 +446,9 @@ class MembershipsService {
         plan.duration_days,
       );
 
-    // ---------------------------------------------------
-    // SUPERPOSICIONES
-    // ---------------------------------------------------
-
     const overlappingMembership =
       await this.findOverlappingMembership(
-        currentMembership.id_customer,
+        customer.id_customer,
         startDateString,
         endDateString,
       );
@@ -483,28 +459,18 @@ class MembershipsService {
       );
     }
 
-    // ---------------------------------------------------
-    // CREAR NUEVA MEMBRESÍA
-    // ---------------------------------------------------
-
     /*
-      No modificamos la membresía anterior.
-      Se crea un registro nuevo para conservar
-      todo el historial.
+      Se crea una nueva membresía y NO se modifica la
+      anterior. Esto conserva correctamente el historial.
     */
-
     const newMembership =
       this.membershipRepository.create({
         id_customer:
           currentMembership.id_customer,
-
         id_plan: plan.id_plan,
-
         start_date: startDateString,
         end_date: endDateString,
-
         applied_price: plan.price,
-
         status: 'PENDING',
       });
 
@@ -517,55 +483,32 @@ class MembershipsService {
   // ACTIVAR MEMBRESÍA
   // =====================================================
 
-  async activate(id        ) {
+  async activate(id) {
     await this.updateExpiredMemberships();
 
     const membership =
-      await this.membershipRepository.findOne({
-        where: {
-          id_membership: id,
-        },
-      });
+      await this.findMembershipById(id);
 
-    if (!membership) {
-      throw new NotFoundException(
-        'Membresía no encontrada',
+    const membershipStatus =
+      this.normalizeStatus(
+        membership.status,
       );
-    }
 
-    if (membership.status !== 'PENDING') {
+    if (membershipStatus !== 'PENDING') {
+      if (membershipStatus === 'CANCELLED') {
+        throw new BadRequestException(
+          'No se puede activar una membresía cancelada',
+        );
+      }
+
       throw new BadRequestException(
         'Solo se pueden activar membresías pendientes',
       );
     }
 
-    // ---------------------------------------------------
-    // CLIENTE
-    // ---------------------------------------------------
-
-    const customer =
-      await this.customerRepository.findOne({
-        where: {
-          id_customer:
-            membership.id_customer,
-        },
-      });
-
-    if (!customer) {
-      throw new NotFoundException(
-        'Cliente no encontrado',
-      );
-    }
-
-    if (customer.status !== 'ACTIVE') {
-      throw new BadRequestException(
-        'No se puede activar la membresía porque el cliente está inactivo',
-      );
-    }
-
-    // ---------------------------------------------------
-    // VALIDAR FECHAS
-    // ---------------------------------------------------
+    await this.findActiveCustomer(
+      membership.id_customer,
+    );
 
     this.parseDate(
       membership.start_date,
@@ -576,16 +519,6 @@ class MembershipsService {
       membership.end_date,
       'La membresía tiene una fecha de vencimiento inválida',
     );
-
-    /*
-      Una membresía solo puede pasar a ACTIVE cuando
-      la fecha actual ya se encuentra dentro de su
-      período de vigencia.
-
-      Esto evita activar anticipadamente renovaciones
-      que comienzan después de que termine la
-      membresía actual.
-    */
 
     const today = this.getToday();
 
@@ -601,24 +534,16 @@ class MembershipsService {
       );
     }
 
-    // ---------------------------------------------------
-    // SUPERPOSICIÓN CON OTRA ACTIVA
-    // ---------------------------------------------------
-
     const overlappingActiveMembership =
       await this.membershipRepository.findOne({
         where: {
           id_membership: Not(id),
-
           id_customer:
             membership.id_customer,
-
           status: 'ACTIVE',
-
           start_date: LessThanOrEqual(
             membership.end_date,
           ),
-
           end_date: MoreThanOrEqual(
             membership.start_date,
           ),
@@ -637,5 +562,68 @@ class MembershipsService {
       membership,
     );
   }
+
+  // =====================================================
+  // CANCELAR MEMBRESÍA
+  // =====================================================
+
+  async cancel(id) {
+    /*
+      Primero sincronizamos vencimientos para que una
+      membresía ya vencida no pueda cancelarse como si
+      siguiera activa.
+    */
+    await this.updateExpiredMemberships();
+
+    const membership =
+      await this.findMembershipById(id);
+
+    const status =
+      this.normalizeStatus(
+        membership.status,
+      );
+
+    /*
+      CANCELLED es un estado final.
+      EXPIRED también es final por vencimiento natural.
+    */
+    if (status === 'CANCELLED') {
+      throw new BadRequestException(
+        'La membresía ya está cancelada',
+      );
+    }
+
+    if (status === 'EXPIRED') {
+      throw new BadRequestException(
+        'No se puede cancelar una membresía que ya está vencida',
+      );
+    }
+
+    /*
+      Se permite cancelar:
+      - PENDING: evita que una membresía programada
+        llegue a activarse.
+      - ACTIVE: detiene la membresía vigente.
+
+      No cambiamos start_date, end_date ni
+      applied_price. Así se conserva el historial
+      exactamente como fue registrado.
+    */
+    if (
+      status !== 'PENDING' &&
+      status !== 'ACTIVE'
+    ) {
+      throw new BadRequestException(
+        'Solo se pueden cancelar membresías pendientes o activas',
+      );
+    }
+
+    membership.status = 'CANCELLED';
+
+    return this.membershipRepository.save(
+      membership,
+    );
+  }
 }
+
 module.exports = MembershipsService;

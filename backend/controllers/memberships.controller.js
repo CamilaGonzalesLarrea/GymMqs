@@ -1,6 +1,47 @@
-module.exports = service => ({
-  findAll: async (req,res) => res.json(await service.findAll()),
-  create: async (req,res) => res.status(201).json(await service.create(req.body)),
-  renew: async (req,res) => res.status(201).json(await service.renew(req.recordId,req.body)),
-  activate: async (req,res) => res.json(await service.activate(req.recordId)),
+module.exports = (service) => ({
+  findAll: async (req, res) => {
+    const memberships =
+      await service.findAll();
+
+    return res.json(memberships);
+  },
+
+  create: async (req, res) => {
+    const membership =
+      await service.create(req.body);
+
+    return res
+      .status(201)
+      .json(membership);
+  },
+
+  renew: async (req, res) => {
+    const membership =
+      await service.renew(
+        req.recordId,
+        req.body,
+      );
+
+    return res
+      .status(201)
+      .json(membership);
+  },
+
+  activate: async (req, res) => {
+    const membership =
+      await service.activate(
+        req.recordId,
+      );
+
+    return res.json(membership);
+  },
+
+  cancel: async (req, res) => {
+    const membership =
+      await service.cancel(
+        req.recordId,
+      );
+
+    return res.json(membership);
+  },
 });

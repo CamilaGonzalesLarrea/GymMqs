@@ -1,57 +1,193 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import './Sidebar.css';
 
-function Sidebar() {
-  const navigate = useNavigate();
+const ADMIN_ROLES = [
+  'administrador',
+  'admin',
+];
 
-  const getUser = () => {
-    try {
-      const storedUser = localStorage.getItem('user');
+const RECEPTION_ROLES = [
+  'recepcionista',
+  'recepcion',
+];
 
-      if (!storedUser) {
-        return null;
-      }
+const HR_ROLES = [
+  'recursos humanos',
+  'rrhh',
+  'rh',
+];
 
-      return JSON.parse(storedUser);
-    } catch {
+const normalizeRole = (role = '') =>
+  String(role)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ');
+
+const normalizeStatus = (status = '') =>
+  String(status)
+    .trim()
+    .toUpperCase();
+
+const roleIsIn = (role, allowedRoles) =>
+  allowedRoles
+    .map(normalizeRole)
+    .includes(normalizeRole(role));
+
+const getStoredUser = () => {
+  try {
+    const storedUser =
+      localStorage.getItem('user');
+
+    if (!storedUser) {
       return null;
     }
-  };
 
-  const normalizeRole = (role = '') =>
-    String(role)
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .trim()
-      .replace(/[_-]+/g, ' ')
-      .replace(/\s+/g, ' ');
+    const user =
+      JSON.parse(storedUser);
 
-  const user = getUser();
-  const role = normalizeRole(user?.role);
+    if (
+      !user ||
+      typeof user !== 'object' ||
+      Array.isArray(user)
+    ) {
+      localStorage.removeItem('user');
+      return null;
+    }
+
+    if (
+      !user.username ||
+      !user.role
+    ) {
+      localStorage.removeItem('user');
+      return null;
+    }
+
+    if (
+      user.status &&
+      normalizeStatus(
+        user.status,
+      ) === 'INACTIVE'
+    ) {
+      localStorage.removeItem('user');
+      return null;
+    }
+
+    return user;
+  } catch {
+    localStorage.removeItem('user');
+    return null;
+  }
+};
+
+function Sidebar() {
+  const navigate =
+    useNavigate();
+
+  const user =
+    getStoredUser();
+
+  const role =
+    normalizeRole(
+      user?.role,
+    );
 
   const isAdmin =
-    role === 'administrador' ||
-    role === 'admin';
+    roleIsIn(
+      role,
+      ADMIN_ROLES,
+    );
+
+  const isReception =
+    roleIsIn(
+      role,
+      RECEPTION_ROLES,
+    );
+
+  const isHr =
+    roleIsIn(
+      role,
+      HR_ROLES,
+    );
+
+  const canAccessHr =
+    isAdmin || isHr;
+
+  const canAccessOperations =
+    isAdmin || isReception;
 
   const getAreaName = () => {
     if (isAdmin) {
       return 'Administración';
     }
 
-    return 'Recursos Humanos';
+    if (isReception) {
+      return 'Producción / Operaciones';
+    }
+
+    if (isHr) {
+      return 'Recursos Humanos';
+    }
+
+    return 'Sin área';
   };
 
-  const getNavClass = ({ isActive }) =>
-    isActive ? 'active' : '';
+  const getNavClass = ({
+    isActive,
+  }) =>
+    isActive
+      ? 'active'
+      : '';
 
   const handleLogout = () => {
-    localStorage.removeItem('user');
+    localStorage.removeItem(
+      'user',
+    );
 
-    navigate('/', {
-      replace: true,
-    });
+    navigate(
+      '/',
+      {
+        replace: true,
+      },
+    );
   };
+
+  const hrLinks = [
+    {
+      to: '/dashboard',
+      label: 'Dashboard',
+    },
+    {
+      to: '/employees',
+      label: 'Empleados',
+    },
+    {
+      to: '/positions',
+      label: 'Cargos',
+    },
+    {
+      to: '/shifts',
+      label: 'Turnos',
+    },
+    {
+      to: '/attendance',
+      label: 'Asistencia',
+    },
+    {
+      to: '/salaries',
+      label: 'Salarios',
+    },
+    {
+      to: '/payrolls',
+      label: 'Planillas',
+    },
+    {
+      to: '/reports',
+      label: 'Reportes',
+    },
+  ];
 
   return (
     <aside className="sidebar">
@@ -62,7 +198,9 @@ function Sidebar() {
         />
 
         <div>
-          <strong>MQS</strong>
+          <strong>
+            MQS
+          </strong>
 
           <span>
             {getAreaName()}
@@ -71,52 +209,27 @@ function Sidebar() {
       </div>
 
       <nav className="sidebar-menu">
-        <NavLink
-          to="/dashboard"
-          className={getNavClass}
-        >
-          Dashboard
-        </NavLink>
+        {canAccessHr &&
+          hrLinks.map(
+            (link) => (
+              <NavLink
+                key={link.to}
+                to={link.to}
+                className={
+                  getNavClass
+                }
+              >
+                {link.label}
+              </NavLink>
+            ),
+          )}
 
-        <NavLink
-          to="/employees"
-          className={getNavClass}
-        >
-          Empleados
-        </NavLink>
-
-        <NavLink
-          to="/positions"
-          className={getNavClass}
-        >
-          Cargos
-        </NavLink>
-
-        <NavLink
-          to="/shifts"
-          className={getNavClass}
-        >
-          Turnos
-        </NavLink>
-
-        <NavLink
-          to="/attendance"
-          className={getNavClass}
-        >
-          Asistencia
-        </NavLink>
-
-        <NavLink
-          to="/reports"
-          className={getNavClass}
-        >
-          Reportes
-        </NavLink>
-
-        {isAdmin && (
+        {canAccessOperations && (
           <NavLink
             to="/operations"
-            className={getNavClass}
+            className={
+              getNavClass
+            }
           >
             Producción / Operaciones
           </NavLink>
@@ -127,24 +240,40 @@ function Sidebar() {
         {user && (
           <div
             style={{
-              marginBottom: '12px',
-              fontSize: '13px',
-              opacity: 0.8,
+              marginBottom:
+                '12px',
+              fontSize:
+                '13px',
+              opacity:
+                0.8,
+              lineHeight:
+                1.45,
+              wordBreak:
+                'break-word',
             }}
           >
-            <div>
-              {user.username || 'Usuario'}
+            <div
+              style={{
+                fontWeight:
+                  600,
+              }}
+            >
+              {user.username ||
+                'Usuario'}
             </div>
 
             <div>
-              {user.role || 'Sin rol'}
+              {user.role ||
+                'Sin rol'}
             </div>
           </div>
         )}
 
         <button
           type="button"
-          onClick={handleLogout}
+          onClick={
+            handleLogout
+          }
         >
           Cerrar sesión
         </button>
