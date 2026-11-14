@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import Sidebar from '../components/Sidebar';
 import { API_URL } from '../config/api';
+import { clearErpSession } from '../config/erpApi';
 import './Dashboard.css';
 
 const MONTHS = [
@@ -20,13 +21,16 @@ const MONTHS = [
   'Diciembre',
 ];
 
+// Todas las consultas de fechas del gimnasio se interpretan en Bolivia.
 const getLocalDateString = () => {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-
-  return `${year}-${month}-${day}`;
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/La_Paz',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const part = (type) => parts.find((item) => item.type === type)?.value ?? '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
 };
 
 const formatTime = (value) => {
@@ -120,6 +124,97 @@ const getErrorMessage = (data, fallback) => {
 
   return fallback;
 };
+
+const TOKEN_KEY = 'authToken';
+const TOKEN_EXPIRY_KEY = 'authTokenExpiresAt';
+const MAX_TOKEN_LENGTH = 4096;
+
+function sessionToken() {
+  let token;
+  let expiry;
+
+  try {
+    token = window.sessionStorage.getItem(TOKEN_KEY);
+    expiry = Number(window.sessionStorage.getItem(TOKEN_EXPIRY_KEY));
+  } catch {
+    clearErpSession();
+    throw new Error('No se pudo acceder a la sesión. Inicia sesión nuevamente.');
+  }
+
+  // Comprobación básica para la interfaz: el backend valida la firma JWT,
+  // el estado del usuario y sus permisos con la base de datos MySQL.
+  if (
+    !token ||
+    token.length > MAX_TOKEN_LENGTH ||
+    !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token) ||
+    !Number.isSafeInteger(expiry) ||
+    expiry <= Date.now()
+  ) {
+    clearErpSession();
+    throw new Error('Tu sesión ha vencido. Inicia sesión nuevamente.');
+  }
+
+  return token;
+}
+
+async function requestJson(url, fallbackMessage, signal) {
+  const token = sessionToken();
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    cache: 'no-store',
+    credentials: 'omit',
+    signal,
+  });
+
+  if (response.status === 401) {
+    clearErpSession();
+    throw new Error('La sesión ya no es válida. Inicia sesión nuevamente.');
+  }
+
+  const data = await parseResponse(response);
+
+  if (!response.ok) {
+    if (response.status === 403) {
+      throw new Error('No tienes permiso para consultar los datos de Recursos Humanos.');
+    }
+    throw new Error(getErrorMessage(data, fallbackMessage));
+  }
+
+  // Estas seis rutas históricas devuelven arreglos, no objetos paginados.
+  // Un formato inesperado debe notificarse, no mostrarse como lista vacía.
+  if (!Array.isArray(data)) {
+    throw new Error(`Respuesta inesperada del servidor: ${fallbackMessage}`);
+  }
+
+  return data;
+}
+
+function readStoredUser() {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const raw = window.localStorage.getItem('user');
+    if (!raw) return null;
+    const user = JSON.parse(raw);
+    if (
+      !user ||
+      typeof user !== 'object' ||
+      Array.isArray(user) ||
+      !user.username ||
+      !user.role ||
+      String(user.status || 'ACTIVE').toUpperCase() === 'INACTIVE'
+    ) {
+      return null;
+    }
+    return user;
+  } catch {
+    return null;
+  }
+}
 
 const isActive = (value) =>
   String(value || '').toUpperCase() === 'ACTIVE';
@@ -243,7 +338,7 @@ const getPayrollStatusStyle = (status) => {
 function Dashboard() {
   const navigate = useNavigate();
 
-  const [user, setUser] = useState(null);
+  const [user] = useState(readStoredUser);
 
   const [employees, setEmployees] = useState([]);
   const [positions, setPositions] = useState([]);
@@ -256,30 +351,17 @@ function Dashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [lastUpdated, setLastUpdated] = useState(null);
+  const currentRequest = useRef(null);
 
   const today = getLocalDateString();
 
-  const requestJson = async (
-    url,
-    fallbackMessage,
-  ) => {
-    const response = await fetch(url);
-    const data = await parseResponse(response);
-
-    if (!response.ok) {
-      throw new Error(
-        getErrorMessage(
-          data,
-          fallbackMessage,
-        ),
-      );
-    }
-
-    return data;
-  };
-
   const loadDashboardData = useCallback(
     async (manualRefresh = false) => {
+      // Al actualizar, cancelar la consulta anterior para evitar datos obsoletos.
+      if (currentRequest.current) currentRequest.current.abort();
+      const controller = new AbortController();
+      currentRequest.current = controller;
+
       try {
         if (manualRefresh) {
           setRefreshing(true);
@@ -300,28 +382,36 @@ function Dashboard() {
           requestJson(
             `${API_URL}/api/employees`,
             'No se pudieron cargar los empleados.',
+            controller.signal,
           ),
           requestJson(
             `${API_URL}/api/positions`,
             'No se pudieron cargar los cargos.',
+            controller.signal,
           ),
           requestJson(
             `${API_URL}/api/shifts`,
             'No se pudieron cargar los turnos.',
+            controller.signal,
           ),
           requestJson(
             `${API_URL}/api/employee-attendance?date_from=${today}&date_to=${today}`,
             'No se pudo cargar la asistencia de hoy.',
+            controller.signal,
           ),
           requestJson(
             `${API_URL}/api/salaries`,
             'No se pudieron cargar los salarios.',
+            controller.signal,
           ),
           requestJson(
             `${API_URL}/api/payrolls`,
             'No se pudieron cargar las planillas.',
+            controller.signal,
           ),
         ]);
+
+        if (controller.signal.aborted) return;
 
         setEmployees(
           Array.isArray(employeesData)
@@ -361,75 +451,43 @@ function Dashboard() {
 
         setLastUpdated(new Date());
       } catch (dashboardError) {
-        console.error(
-          'Error cargando dashboard:',
-          dashboardError,
-        );
+        if (controller.signal.aborted || dashboardError?.name === 'AbortError') return;
 
+        console.error('Error cargando dashboard:', dashboardError);
         setError(
-          dashboardError.message ||
+          dashboardError?.message ||
             'No se pudieron cargar todos los datos del dashboard.',
         );
       } finally {
-        setLoading(false);
-        setRefreshing(false);
+        if (currentRequest.current === controller) {
+          currentRequest.current = null;
+        }
+        if (!controller.signal.aborted) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     },
     [today],
   );
 
   useEffect(() => {
-    const storedUser =
-      localStorage.getItem('user');
-
-    if (!storedUser) {
-      navigate('/', {
-        replace: true,
-      });
-
-      return;
+    if (!user) {
+      clearErpSession();
+      navigate('/', { replace: true });
+      return undefined;
     }
 
-    try {
-      const parsedUser =
-        JSON.parse(storedUser);
+    let disposed = false;
+    Promise.resolve().then(() => {
+      if (!disposed) void loadDashboardData();
+    });
 
-      if (
-        !parsedUser ||
-        typeof parsedUser !== 'object' ||
-        !parsedUser.username ||
-        !parsedUser.role ||
-        String(
-          parsedUser.status || 'ACTIVE',
-        ).toUpperCase() === 'INACTIVE'
-      ) {
-        localStorage.removeItem('user');
-
-        navigate('/', {
-          replace: true,
-        });
-
-        return;
-      }
-
-      setUser(parsedUser);
-    } catch (storageError) {
-      console.error(
-        'Error leyendo el usuario:',
-        storageError,
-      );
-
-      localStorage.removeItem('user');
-
-      navigate('/', {
-        replace: true,
-      });
-
-      return;
-    }
-
-    loadDashboardData();
-  }, [navigate, loadDashboardData]);
+    return () => {
+      disposed = true;
+      if (currentRequest.current) currentRequest.current.abort();
+    };
+  }, [user, navigate, loadDashboardData]);
 
   const activeSalaryByEmployee = useMemo(() => {
     const map = new Map();

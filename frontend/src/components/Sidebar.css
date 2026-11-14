@@ -1,132 +1,207 @@
+
 .sidebar {
     width: 245px;
     height: 100vh;
+    height: 100dvh;
 
     position: fixed;
     left: 0;
     top: 0;
+    z-index: 100;
 
     display: flex;
     flex-direction: column;
 
     background: #111111;
-
     border-right: 1px solid #292929;
 
     padding: 25px 18px;
-
     box-sizing: border-box;
+
+    overflow: hidden;
 }
 
+/* LOGO */
 
 .sidebar-logo {
     display: flex;
     align-items: center;
+    flex-shrink: 0;
 
     gap: 12px;
-
     padding-bottom: 25px;
 
     border-bottom: 1px solid #292929;
 }
 
-
 .sidebar-logo img {
     width: 62px;
     height: 62px;
 
+    flex-shrink: 0;
     object-fit: cover;
 
     border-radius: 8px;
 }
 
-
 .sidebar-logo strong {
     display: block;
 
     color: white;
-
     font-size: 22px;
-
     letter-spacing: 1px;
 }
 
-
 .sidebar-logo span {
     display: block;
-
     margin-top: 4px;
 
     color: #888888;
-
     font-size: 11px;
+    line-height: 1.4;
 }
 
+/* MENÚ DE NAVEGACIÓN */
 
 .sidebar-menu {
     display: flex;
-
     flex-direction: column;
+    flex: 1 1 auto;
+
+    min-height: 0;
 
     gap: 7px;
 
-    margin-top: 30px;
+    margin-top: 20px;
+    padding-right: 5px;
+    padding-bottom: 15px;
+
+    overflow-y: auto;
+    overflow-x: hidden;
+
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: #444444 transparent;
 }
 
+/* SCROLL DEL MENÚ */
+
+.sidebar-menu::-webkit-scrollbar {
+    width: 5px;
+}
+
+.sidebar-menu::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.sidebar-menu::-webkit-scrollbar-thumb {
+    background: #444444;
+    border-radius: 10px;
+}
+
+.sidebar-menu::-webkit-scrollbar-thumb:hover {
+    background: #666666;
+}
+
+/* ENLACES */
 
 .sidebar-menu a {
-    padding: 13px 15px;
+    display: block;
+    flex-shrink: 0;
 
+    padding: 13px 15px;
     border-radius: 8px;
 
     color: #999999;
-
     text-decoration: none;
 
     font-size: 14px;
+    line-height: 1.4;
 
-    transition: 0.2s;
+    overflow-wrap: anywhere;
+
+    transition:
+        background-color 0.2s ease,
+        color 0.2s ease;
 }
-
 
 .sidebar-menu a:hover {
     background: #1d1d1d;
-
     color: white;
 }
-
 
 .sidebar-menu a.active {
     background: #c00025;
-
     color: white;
 }
 
-
-.sidebar-bottom {
-    margin-top: auto;
+.sidebar-menu a.active:hover {
+    background: #d0002c;
 }
 
+.sidebar-menu a:focus-visible {
+    outline: 2px solid #e00035;
+    outline-offset: 2px;
+}
+
+/* PARTE INFERIOR */
+
+.sidebar-bottom {
+    flex-shrink: 0;
+
+    margin-top: auto;
+    padding-top: 18px;
+
+    border-top: 1px solid #292929;
+}
 
 .sidebar-bottom button {
     width: 100%;
-
     padding: 12px;
 
     background: transparent;
-
     border: 1px solid #333333;
-
     border-radius: 8px;
 
     color: #888888;
+    font-size: 14px;
 
     cursor: pointer;
-}
 
+    transition:
+        border-color 0.2s ease,
+        color 0.2s ease,
+        background-color 0.2s ease;
+}
 
 .sidebar-bottom button:hover {
     border-color: #c00025;
-
+    background: #1d1d1d;
     color: white;
+}
+
+.sidebar-bottom button:focus-visible {
+    outline: 2px solid #e00035;
+    outline-offset: 2px;
+}
+
+/* PANTALLAS CON POCA ALTURA */
+
+@media (max-height: 650px) {
+    .sidebar {
+        padding-top: 15px;
+        padding-bottom: 15px;
+    }
+
+    .sidebar-logo {
+        padding-bottom: 15px;
+    }
+
+    .sidebar-menu {
+        margin-top: 12px;
+    }
+
+    .sidebar-bottom {
+        padding-top: 12px;
+    }
 }

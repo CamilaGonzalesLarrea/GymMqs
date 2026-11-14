@@ -1,34 +1,142 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { API_URL } from '../config/api';
 import './Operations.css';
 
-async function apiRequest(path, options = {}) {
-  const response = await fetch(`${API_URL}${path}`, options);
+// Operaciones utiliza las rutas existentes. El JWT se adjunta para las
+// solicitudes actuales y futuras; los permisos deben aplicarse en Express.
+const REQUEST_TIMEOUT_MS = 20000;
+const MAX_USER_ID = 2147483647;
 
-  if (!response.ok) {
-    let message = 'Ocurrió un error';
+function validId(value) {
+  return /^[1-9]\d*$/.test(String(value ?? '')) &&
+    Number.isSafeInteger(Number(value)) && Number(value) <= MAX_USER_ID;
+}
 
-    try {
-      const data = await response.json();
+function datePart(value) {
+  return typeof value === 'string' ? value.slice(0, 10) : '';
+}
 
-      if (Array.isArray(data.message)) {
-        message = data.message.join(', ');
-      } else if (data.message) {
-        message = data.message;
-      }
-    } catch {
-      message = 'No se pudo completar la operación';
+function isDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+function todayInBolivia() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/La_Paz', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date());
+  const part = (name) => parts.find((item) => item.type === name)?.value || '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+function isValidMoney(value) {
+  const text = String(value ?? '').trim();
+  return /^\d{1,8}(?:\.\d{1,2})?$/.test(text) && Number(text) > 0;
+}
+
+function clearLocalSession() {
+  try { window.localStorage.removeItem('user'); } catch { /* almacenamiento restringido */ }
+  try {
+    window.sessionStorage.removeItem('authToken');
+    window.sessionStorage.removeItem('authTokenExpiresAt');
+  } catch { /* almacenamiento restringido */ }
+  // App.jsx vuelve a verificar la sesión cuando recibe focus.
+  window.dispatchEvent(new Event('focus'));
+}
+
+function sessionToken() {
+  try {
+    const token = window.sessionStorage.getItem('authToken');
+    const rawExpiry = window.sessionStorage.getItem('authTokenExpiresAt');
+    const expiry = Number(rawExpiry);
+    if (!token || token.length > 4096 || !Number.isSafeInteger(expiry) ||
+        expiry <= Date.now() || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) {
+      return null;
     }
-
-    throw new Error(message);
-  }
-
-  if (response.status === 204) {
+    return token;
+  } catch {
     return null;
   }
+}
 
-  return response.json();
+async function apiRequest(path, options = {}) {
+  if (typeof path !== 'string' || !/^\/[a-z][A-Za-z0-9/_-]*(?:\/[1-9]\d*)?(?:\/[a-z]+)?$/i.test(path)) {
+    throw new Error('La ruta de la solicitud no es válida.');
+  }
+
+  const token = sessionToken();
+  if (!token) {
+    clearLocalSession();
+    throw new Error('La sesión ha vencido. Vuelve a iniciar sesión.');
+  }
+
+  const headers = new Headers(options.headers || {});
+  headers.set('Accept', 'application/json');
+  headers.set('Authorization', `Bearer ${token}`);
+
+  const controller = new AbortController();
+  const externalSignal = options.signal;
+  const cancel = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else externalSignal.addEventListener('abort', cancel, { once: true });
+  }
+  let timedOut = false;
+  const timeout = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, REQUEST_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(`${API_URL}${path}`, {
+      ...options,
+      headers,
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+
+    if (response.status === 401) {
+      clearLocalSession();
+      throw new Error('La sesión ya no es válida. Inicia sesión nuevamente.');
+    }
+    const contentType = response.headers.get('content-type') || '';
+    let data = null;
+    if (response.status !== 204) {
+      const text = await response.text();
+      if (text) {
+        if (!contentType.toLowerCase().includes('application/json')) {
+          throw new Error('El servidor devolvió una respuesta inesperada.');
+        }
+        try { data = JSON.parse(text); }
+        catch { throw new Error('No se pudo interpretar la respuesta del servidor.'); }
+      }
+    }
+    if (!response.ok) {
+      const details = Array.isArray(data?.message)
+        ? data.message.join(', ')
+        : typeof data?.message === 'string' ? data.message : '';
+      // No mostrar detalles internos del servidor al usuario.
+      const message = response.status >= 500
+        ? 'No se pudo completar la operación por un error del servidor.'
+        : details || `La solicitud fue rechazada (HTTP ${response.status}).`;
+      throw new Error(message);
+    }
+    return data;
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      if (timedOut) throw new Error('El servidor tardó demasiado en responder. Actualiza y vuelve a intentar.', { cause: error });
+      throw error;
+    }
+    if (error instanceof TypeError) {
+      throw new Error('No fue posible conectar con el servidor. Verifica que el backend esté iniciado.', { cause: error });
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+    if (externalSignal) externalSignal.removeEventListener('abort', cancel);
+  }
 }
 
 function Operations() {
@@ -66,11 +174,8 @@ function Operations() {
     normalizedRole === 'admin';
 
   const handleLogout = () => {
-    localStorage.removeItem('user');
-
-    navigate('/', {
-      replace: true,
-    });
+    clearLocalSession();
+    navigate('/', { replace: true });
   };
 
   const handleGoToDashboard = () => {
@@ -78,6 +183,18 @@ function Operations() {
   };
 
   const [section, setSection] = useState('customers');
+  const [loadingError, setLoadingError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const actionLock = useRef(false);
+
+  // Evita dos envíos simultáneos, incluso con doble clic rápido.
+  const withLock = async (operation) => {
+    if (actionLock.current) return;
+    actionLock.current = true;
+    setSaving(true);
+    try { await operation(); }
+    finally { actionLock.current = false; setSaving(false); }
+  };
 
   // =====================================================
   // CLIENTES
@@ -156,18 +273,8 @@ function Operations() {
   // FECHA ACTUAL
   // =====================================================
 
-  const getToday = () => {
-    const today = new Date();
-
-    const year = today.getFullYear();
-    const month = String(today.getMonth() + 1).padStart(
-      2,
-      '0',
-    );
-    const day = String(today.getDate()).padStart(2, '0');
-
-    return `${year}-${month}-${day}`;
-  };
+  // Todas las fechas operativas corresponden al día de Bolivia (UTC-04:00).
+  const getToday = todayInBolivia;
 
   const emptyMembershipForm = {
     id_customer: '',
@@ -182,53 +289,56 @@ function Operations() {
   // CARGAR DATOS
   // =====================================================
 
-  const loadCustomers = async () => {
-    try {
-      const data = await apiRequest('/customers');
-      setCustomers(data);
-    } catch (error) {
-      console.error('Error cargando clientes:', error);
-    }
-  };
-
-  const loadPlans = async () => {
-    try {
-      const data = await apiRequest('/membership-plans');
-      setPlans(data);
-    } catch (error) {
-      console.error('Error cargando planes:', error);
-    }
-  };
-
-  const loadMemberships = async () => {
-    try {
-      const data = await apiRequest('/memberships');
-      setMemberships(data);
-    } catch (error) {
-      console.error('Error cargando membresías:', error);
-    }
-  };
-
-  const loadAttendances = async () => {
-    try {
-      const data = await apiRequest(
-        '/customer-attendances',
-      );
-
-      setAttendances(data);
-    } catch (error) {
-      console.error('Error cargando asistencias:', error);
-    }
-  };
-
-  useEffect(() => {
-    loadCustomers();
-    loadPlans();
-    loadMemberships();
-    loadAttendances();
+  const loadCustomers = useCallback(async (signal) => {
+    const data = await apiRequest('/customers', { signal });
+    if (!Array.isArray(data)) throw new Error('La respuesta de clientes es incorrecta.');
+    if (!signal?.aborted) setCustomers(data);
   }, []);
 
+  const loadPlans = useCallback(async (signal) => {
+    const data = await apiRequest('/membership-plans', { signal });
+    if (!Array.isArray(data)) throw new Error('La respuesta de planes es incorrecta.');
+    if (!signal?.aborted) setPlans(data);
+  }, []);
+
+  const loadMemberships = useCallback(async (signal) => {
+    const data = await apiRequest('/memberships', { signal });
+    if (!Array.isArray(data)) throw new Error('La respuesta de membresías es incorrecta.');
+    if (!signal?.aborted) setMemberships(data);
+  }, []);
+
+  const loadAttendances = useCallback(async (signal) => {
+    const data = await apiRequest('/customer-attendances', { signal });
+    if (!Array.isArray(data)) throw new Error('La respuesta de asistencias es incorrecta.');
+    if (!signal?.aborted) setAttendances(data);
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    Promise.resolve().then(() => {
+      if (controller.signal.aborted) return [];
+      return Promise.allSettled([
+        loadCustomers(controller.signal),
+        loadPlans(controller.signal),
+        loadMemberships(controller.signal),
+        loadAttendances(controller.signal),
+      ]);
+    }).then((results) => {
+      if (controller.signal.aborted) return;
+      const rejected = results.filter((item) => item.status === 'rejected' &&
+        item.reason?.name !== 'AbortError');
+      if (rejected.length > 0) {
+        setLoadingError(`No se pudieron cargar ${rejected.length} de las 4 secciones. ` +
+          'Comprueba la conexión y los permisos.');
+      } else {
+        setLoadingError('');
+      }
+    });
+    return () => controller.abort();
+  }, [loadCustomers, loadPlans, loadMemberships, loadAttendances]);
+
   // =====================================================
+  // CAMBIAR SECCIÓN  // =====================================================
   // CAMBIAR SECCIÓN
   // =====================================================
 
@@ -289,7 +399,7 @@ function Operations() {
       last_name: customer.last_name || '',
       phone: customer.phone || '',
       email: customer.email || '',
-      birth_date: customer.birth_date || '',
+      birth_date: datePart(customer.birth_date),
       notes: customer.notes || '',
     });
 
@@ -326,11 +436,29 @@ function Operations() {
       first_name: customerForm.first_name.trim(),
       last_name: customerForm.last_name.trim(),
       phone: customerForm.phone.trim(),
-      email: customerForm.email || null,
+      email: customerForm.email.trim() || null,
       birth_date: customerForm.birth_date || null,
-      notes: customerForm.notes || null,
+      notes: customerForm.notes.trim() || null,
     };
 
+    if (!/^[^\d]{1,50}$/.test(body.first_name) || !/^[^\d]{1,50}$/.test(body.last_name)) {
+      alert('El nombre y apellido deben ser válidos y tener como máximo 50 caracteres.');
+      return;
+    }
+    if (body.phone.replace(/\D/g, '').length < 7 || body.phone.replace(/\D/g, '').length > 15) {
+      alert('El teléfono debe contener entre 7 y 15 dígitos.');
+      return;
+    }
+    if (body.email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(body.email.trim())) {
+      alert('El correo electrónico no tiene un formato válido.');
+      return;
+    }
+    if (body.birth_date && (!isDate(body.birth_date) || body.birth_date > todayInBolivia())) {
+      alert('La fecha de nacimiento es inválida o futura.');
+      return;
+    }
+
+    await withLock(async () => {
     try {
       await apiRequest(url, {
         method,
@@ -345,32 +473,27 @@ function Operations() {
     } catch (error) {
       alert(error.message);
     }
+    });
   };
 
   const handleCustomerStatusChange = async (customer) => {
-    const newStatus =
-      customer.status === 'ACTIVE'
-        ? 'INACTIVE'
-        : 'ACTIVE';
+    if (!validId(customer.id_customer)) return;
+    const newStatus = customer.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+    if (!window.confirm(
+      `¿Confirmas ${newStatus === 'ACTIVE' ? 'activar' : 'desactivar'} al cliente ` +
+      `${customer.first_name} ${customer.last_name}?`,
+    )) return;
 
-    try {
-      await apiRequest(
-        `/customers/${customer.id_customer}/status`,
-        {
+    await withLock(async () => {
+      try {
+        await apiRequest(`/customers/${customer.id_customer}/status`, {
           method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            status: newStatus,
-          }),
-        },
-      );
-
-      await loadCustomers();
-    } catch (error) {
-      alert(error.message);
-    }
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: newStatus }),
+        });
+        await loadCustomers();
+      } catch (error) { alert(error.message); }
+    });
   };
 
   // =====================================================
@@ -385,12 +508,14 @@ function Operations() {
   };
 
   const handleNewPlan = () => {
+    if (!isAdmin) return;
     setEditingPlanId(null);
     setPlanForm(emptyPlanForm);
     setShowPlanForm(true);
   };
 
   const handleEditPlan = (plan) => {
+    if (!isAdmin) return;
     setEditingPlanId(plan.id_plan);
 
     setPlanForm({
@@ -411,6 +536,10 @@ function Operations() {
 
   const handlePlanSubmit = async (event) => {
     event.preventDefault();
+    if (!isAdmin) {
+      alert('Solo Administración puede crear o modificar planes.');
+      return;
+    }
 
     const url = editingPlanId
       ? `/membership-plans/${editingPlanId}`
@@ -421,10 +550,30 @@ function Operations() {
     const body = {
       plan_name: planForm.plan_name.trim(),
       duration_days: Number(planForm.duration_days),
-      price: planForm.price,
-      description: planForm.description,
+      price: String(planForm.price).trim(),
+      description: planForm.description.trim(),
     };
 
+    const name = body.plan_name;
+    const duration = body.duration_days;
+    if (!name || name.length > 80) {
+      alert('El nombre del plan es obligatorio y no puede superar 80 caracteres.');
+      return;
+    }
+    if (!Number.isSafeInteger(duration) || duration < 1 || duration > 3650) {
+      alert('La duración debe ser un número entero de 1 a 3650 días.');
+      return;
+    }
+    if (!isValidMoney(body.price)) {
+      alert('El precio debe ser mayor a cero, con hasta dos decimales y dentro del límite permitido.');
+      return;
+    }
+    if (String(body.description ?? '').length > 500) {
+      alert('La descripción no puede superar los 500 caracteres.');
+      return;
+    }
+
+    await withLock(async () => {
     try {
       await apiRequest(url, {
         method,
@@ -439,32 +588,27 @@ function Operations() {
     } catch (error) {
       alert(error.message);
     }
+    });
   };
 
   const handlePlanStatusChange = async (plan) => {
-    const newStatus =
-      plan.status === 'ACTIVE'
-        ? 'INACTIVE'
-        : 'ACTIVE';
+    if (!isAdmin || !validId(plan.id_plan)) return;
+    const newStatus = plan.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+    if (!window.confirm(
+      `¿Confirmas ${newStatus === 'ACTIVE' ? 'activar' : 'desactivar'} ` +
+      `el plan ${plan.plan_name}?`,
+    )) return;
 
-    try {
-      await apiRequest(
-        `/membership-plans/${plan.id_plan}/status`,
-        {
+    await withLock(async () => {
+      try {
+        await apiRequest(`/membership-plans/${plan.id_plan}/status`, {
           method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            status: newStatus,
-          }),
-        },
-      );
-
-      await loadPlans();
-    } catch (error) {
-      alert(error.message);
-    }
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: newStatus }),
+        });
+        await loadPlans();
+      } catch (error) { alert(error.message); }
+    });
   };
 
   // =====================================================
@@ -532,8 +676,17 @@ function Operations() {
       return;
     }
 
-    if (!membershipForm.start_date) {
-      alert('Selecciona una fecha de inicio.');
+    if (!isDate(membershipForm.start_date)) {
+      alert('Selecciona una fecha de inicio válida.');
+      return;
+    }
+    if (!isValidMoney(plan.price)) {
+      alert('El plan debe tener un precio positivo válido para poder cobrarlo.');
+      return;
+    }
+    const lastDay = addDaysToDateString(membershipForm.start_date, Number(plan.duration_days) - 1);
+    if (!isDate(lastDay) || lastDay < todayInBolivia()) {
+      alert('La membresía no puede tener un vencimiento anterior al día de hoy.');
       return;
     }
 
@@ -543,6 +696,7 @@ function Operations() {
       start_date: membershipForm.start_date,
     };
 
+    await withLock(async () => {
     try {
       await apiRequest('/memberships', {
         method: 'POST',
@@ -557,48 +711,58 @@ function Operations() {
     } catch (error) {
       alert(error.message);
     }
+    });
   };
 
-  const handleActivateMembership = async (
-    membership,
-  ) => {
-    try {
-      await apiRequest(
-        `/memberships/${membership.id_membership}/activate`,
-        {
-          method: 'PATCH',
-        },
-      );
+  const handleActivateMembership = (membership) => {
+    // El cobro del ERP registra el pago + ingreso en caja + activación en una
+    // sola transacción. No utilizar la antigua ruta /memberships/:id/activate.
+    if (membership.status !== 'PENDING' || !validId(membership.id_membership)) return;
+    alert(`Para activar la membresía #${membership.id_membership}, selecciónala en Finanzas / Pagos y confirma el cobro.`);
+    navigate('/erp/payments');
+  };
 
-      await loadMemberships();
-    } catch (error) {
-      alert(error.message);
+  const handleCancelMembershipStatus = async (membership) => {
+    if (!validId(membership.id_membership)) {
+      alert('La membresía seleccionada no es válida.');
+      return;
     }
+    if (membership.status === 'ACTIVE') {
+      // La anulación financiera revierte el ingreso y cancela la membresía.
+      // Evita dejar en caja un cobro de una membresía cancelada manualmente.
+      alert(`Para anular la membresía activa #${membership.id_membership}, busca su pago en el historial de Finanzas y realiza la anulación autorizada. Si es una membresía antigua sin pago ERP, debe regularizarse primero.`);
+      navigate('/erp/payments');
+      return;
+    }
+    if (membership.status !== 'PENDING') {
+      alert('Solo se pueden cancelar membresías pendientes desde Operaciones.');
+      return;
+    }
+
+    if (!window.confirm(
+      `¿Cancelar la membresía pendiente #${membership.id_membership}? No se registrará ningún movimiento de caja.`,
+    )) return;
+
+    await withLock(async () => {
+      try {
+        // Se vuelve a consultar para reducir el riesgo de actuar sobre un
+        // estado obsoleto; el backend también deberá aplicar esta regla.
+        const current = await apiRequest('/memberships');
+        const fresh = Array.isArray(current) ? current.find((item) =>
+          Number(item.id_membership) === Number(membership.id_membership)) : null;
+        if (!fresh || fresh.status !== 'PENDING') {
+          setMemberships(Array.isArray(current) ? current : []);
+          throw new Error('La membresía ya cambió de estado. Actualiza antes de continuar.');
+        }
+        await apiRequest(`/memberships/${membership.id_membership}/cancel`, {
+          method: 'PATCH',
+        });
+        await loadMemberships();
+        alert('Membresía pendiente cancelada correctamente.');
+      } catch (error) { alert(error.message); }
+    });
   };
-const handleCancelMembershipStatus = async (membership) => {
-  const confirmed = window.confirm(
-    `¿Seguro que deseas cancelar la membresía #${membership.id_membership}?`,
-  );
 
-  if (!confirmed) {
-    return;
-  }
-
-  try {
-    await apiRequest(
-      `/memberships/${membership.id_membership}/cancel`,
-      {
-        method: 'PATCH',
-      },
-    );
-
-    await loadMemberships();
-
-    alert('Membresía cancelada correctamente.');
-  } catch (error) {
-    alert(error.message);
-  }
-};
   const handleRenewMembership = (membership) => {
     const customer = customers.find(
       (item) =>
@@ -666,16 +830,19 @@ const handleCancelMembershipStatus = async (membership) => {
       return;
     }
 
-    if (!renewalForm.id_plan) {
-      alert('Selecciona un plan para la renovación');
+    const plan = plans.find((item) => Number(item.id_plan) === Number(renewalForm.id_plan));
+    if (!plan || plan.status !== 'ACTIVE' || !isValidMoney(plan.price)) {
+      alert('Debes elegir un plan activo con precio válido.');
       return;
     }
-
-    if (
-      membership.status === 'EXPIRED' &&
-      !renewalForm.renewal_date
-    ) {
-      alert('Selecciona la fecha de renovación');
+    if (membership.status !== 'ACTIVE' && membership.status !== 'EXPIRED') {
+      alert('Solo se pueden renovar membresías activas o vencidas.');
+      return;
+    }
+    if (membership.status === 'EXPIRED' &&
+      (!isDate(renewalForm.renewal_date) ||
+        renewalForm.renewal_date < todayInBolivia())) {
+      alert('Selecciona una fecha de renovación válida desde hoy en adelante.');
       return;
     }
 
@@ -687,6 +854,7 @@ const handleCancelMembershipStatus = async (membership) => {
       body.renewal_date = renewalForm.renewal_date;
     }
 
+    await withLock(async () => {
     try {
       await apiRequest(
         `/memberships/${membership.id_membership}/renew`,
@@ -703,11 +871,12 @@ const handleCancelMembershipStatus = async (membership) => {
       await loadMemberships();
 
       alert(
-        'Renovación creada correctamente. La nueva membresía quedó pendiente de activación.',
+        'Renovación creada correctamente. La nueva membresía quedó pendiente de pago en Finanzas.',
       );
     } catch (error) {
       alert(error.message);
     }
+    });
   };
 
   // =====================================================
@@ -754,6 +923,7 @@ const handleCancelMembershipStatus = async (membership) => {
       return;
     }
 
+    await withLock(async () => {
     try {
       await apiRequest('/customer-attendances', {
         method: 'POST',
@@ -775,6 +945,7 @@ const handleCancelMembershipStatus = async (membership) => {
     } catch (error) {
       alert(error.message);
     }
+    });
   };
 
   const handleAttendanceRenewal = async () => {
@@ -913,7 +1084,7 @@ const handleCancelMembershipStatus = async (membership) => {
   };
 
   const addDaysToDateString = (dateString, days) => {
-    if (!dateString) {
+    if (!isDate(dateString) || !Number.isSafeInteger(Number(days))) {
       return '';
     }
 
@@ -1162,7 +1333,7 @@ const handleCancelMembershipStatus = async (membership) => {
             </button>
           )}
 
-          {section === 'plans' && (
+          {section === 'plans' && isAdmin && (
             <button
               type="button"
               className="primary-button"
@@ -1234,6 +1405,21 @@ const handleCancelMembershipStatus = async (membership) => {
           </button>
         </div>
       </header>
+
+      {saving && (
+        <div role="status" className="form-info" style={{ margin: '12px 24px' }}>
+          Guardando cambios… Evita repetir la operación.
+        </div>
+      )}
+
+      {loadingError && (
+        <div className="form-warning" role="alert" style={{ margin: '12px 24px' }}>
+          {loadingError}{' '}
+          <button type="button" onClick={() => window.location.reload()}>
+            Reintentar
+          </button>
+        </div>
+      )}
 
       <nav className="navigation">
         <button
@@ -1855,7 +2041,13 @@ const handleCancelMembershipStatus = async (membership) => {
             </p>
           </div>
 
-          {showPlanForm && (
+          {!isAdmin && (
+            <p className="form-info" role="note">
+              La edición y administración de planes corresponde a Administración.
+            </p>
+          )}
+
+          {showPlanForm && isAdmin && (
             <div className="form-container">
               <h3>
                 {editingPlanId
@@ -1895,7 +2087,7 @@ const handleCancelMembershipStatus = async (membership) => {
 
                     <input
                       type="number"
-                      min="0"
+                      min="0.01"
                       step="0.01"
                       name="price"
                       value={planForm.price}
@@ -1980,31 +2172,21 @@ const handleCancelMembershipStatus = async (membership) => {
                     </td>
 
                     <td>
-                      <div className="action-buttons">
-                        <button
-                          className="edit-button"
-                          onClick={() =>
-                            handleEditPlan(plan)
-                          }
-                        >
-                          Editar
-                        </button>
-
-                        <button
-                          className={
-                            plan.status === 'ACTIVE'
+                      {isAdmin ? (
+                        <div className="action-buttons">
+                          <button type="button" className="edit-button" disabled={saving}
+                            onClick={() => handleEditPlan(plan)}>
+                            Editar
+                          </button>
+                          <button type="button" disabled={saving}
+                            className={plan.status === 'ACTIVE'
                               ? 'status-button deactivate-button'
-                              : 'status-button activate-button'
-                          }
-                          onClick={() =>
-                            handlePlanStatusChange(plan)
-                          }
-                        >
-                          {plan.status === 'ACTIVE'
-                            ? 'Desactivar'
-                            : 'Activar'}
-                        </button>
-                      </div>
+                              : 'status-button activate-button'}
+                            onClick={() => handlePlanStatusChange(plan)}>
+                            {plan.status === 'ACTIVE' ? 'Desactivar' : 'Activar'}
+                          </button>
+                        </div>
+                      ) : 'Solo lectura'}
                     </td>
                   </tr>
                 ))}
@@ -2032,9 +2214,14 @@ const handleCancelMembershipStatus = async (membership) => {
             <h2>Membresías y Renovaciones</h2>
 
             <p>
-              Registro, activación y renovación de
+              Registro, cobro en Finanzas y renovación de
               membresías
             </p>
+            <div className="form-info" role="note" style={{ marginTop: '12px' }}>
+              Las membresías nuevas y renovadas quedan pendientes. Para activarlas,
+              registra el pago desde <strong>Finanzas / Pagos</strong>. Un cobro
+              confirmado genera automáticamente el movimiento de Caja.
+            </div>
           </div>
 
           {showMembershipForm && (
@@ -2226,9 +2413,11 @@ const handleCancelMembershipStatus = async (membership) => {
                     type="submit"
                     className="primary-button"
                     disabled={
+                      saving ||
                       !selectedMembershipCustomer ||
                       !selectedMembershipPlan ||
-                      !membershipForm.start_date
+                      !isDate(membershipForm.start_date) ||
+                      !isValidMoney(selectedMembershipPlan.price)
                     }
                   >
                     Confirmar y guardar membresía
@@ -2384,7 +2573,7 @@ const handleCancelMembershipStatus = async (membership) => {
                   <button
                     type="submit"
                     className="primary-button"
-                    disabled={!selectedRenewalPlan}
+                    disabled={saving || !selectedRenewalPlan || !isValidMoney(selectedRenewalPlan.price)}
                   >
                     Confirmar renovación
                   </button>
@@ -2450,14 +2639,16 @@ const handleCancelMembershipStatus = async (membership) => {
                         {membership.status ===
                           'PENDING' && (
                           <button
+                            type="button"
                             className="status-button activate-button"
+                            disabled={saving}
                             onClick={() =>
                               handleActivateMembership(
                                 membership,
                               )
                             }
                           >
-                            Activar
+                            Cobrar / activar
                           </button>
                         )}
 
@@ -2479,14 +2670,12 @@ const handleCancelMembershipStatus = async (membership) => {
 {(membership.status === 'PENDING' ||
   membership.status === 'ACTIVE') && (
   <button
+    type="button"
     className="status-button deactivate-button"
-    onClick={() =>
-      handleCancelMembershipStatus(
-        membership,
-      )
-    }
+    disabled={saving}
+    onClick={() => handleCancelMembershipStatus(membership)}
   >
-    Cancelar
+    {membership.status === 'ACTIVE' ? 'Gestionar anulación' : 'Cancelar pendiente'}
   </button>
 )}
                         {membership.status ===

@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const { createErpAuthMiddleware } = require('./middlewares/erp-auth.middleware');
 
 const {
   createRepository,
@@ -123,6 +124,71 @@ function createApp(db, options = {}) {
   app.use(cors());
   app.use(express.json());
 
+  // Acceso centralizado a todos los módulos existentes de RR. HH.
+  // El middleware ERP verifica la firma del JWT y consulta el estado
+  // real del usuario y de su rol en MySQL en cada petición.
+  const HR_ALLOWED_ROLES = new Set([
+    'administrador', 'admin', 'recursos humanos', 'rrhh', 'rh',
+  ]);
+
+  const normalizeHrRole = (value) => String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ');
+
+  // Inicializar al recibir la primera petición a RR. HH. para conservar
+  // la creación de la app en pruebas antiguas sin JWT_SECRET configurado.
+  // Si falta la configuración real, NO se autoriza ninguna operación.
+  let hrAuthentication = null;
+
+  const requireHrAuthentication = (req, res, next) => {
+    res.set('Cache-Control', 'private, no-store');
+    res.set('Pragma', 'no-cache');
+    res.vary('Authorization');
+    res.set('X-Content-Type-Options', 'nosniff');
+
+    if (!db || typeof db.query !== 'function') {
+      return res.status(503).json({
+        message: 'La conexión MySQL de autenticación no está disponible',
+        statusCode: 503,
+      });
+    }
+
+    if (!hrAuthentication) {
+      try {
+        hrAuthentication = createErpAuthMiddleware(db);
+      } catch (error) {
+        // JWT_SECRET ausente o inválido: error controlado, nunca acceso abierto.
+        if (String(error?.message ?? '').includes('JWT_SECRET')) {
+          return res.status(503).json({
+            message: 'La autenticación de Recursos Humanos no está configurada',
+            statusCode: 503,
+          });
+        }
+        return next(error);
+      }
+    }
+
+    return hrAuthentication(req, res, next);
+  };
+
+  const requireHrRole = (req, res, next) => {
+    if (
+      req.auth?.verified !== true ||
+      !HR_ALLOWED_ROLES.has(normalizeHrRole(req.auth.role))
+    ) {
+      return res.status(403).json({
+        message: 'No tienes permiso para acceder a Recursos Humanos',
+        statusCode: 403,
+      });
+    }
+    return next();
+  };
+
+
   const customers = createRepository(
     db,
     'customers',
@@ -171,17 +237,92 @@ function createApp(db, options = {}) {
     ),
   );
 
+  // ERP / Finanzas: pagos protegidos con JWT y permisos verificados.
+  // Este modulo exige conexiones transaccionales mysql2/promise.
+  // Si el adaptador no admite transacciones (por ejemplo, pruebas unitarias
+  // antiguas con un db simulado), conservar los otros modulos funcionando,
+  // pero NO permitir pagos sin garantias de integridad.
+  if (typeof db?.getConnection === 'function') {
+    app.use(
+      '/api/erp/payments',
+      require('./routes/erp-payments.routes')(db),
+    );
+  } else {
+    app.use('/api/erp/payments', (req, res) => {
+      res.set('Cache-Control', 'no-store');
+      return res.status(503).json({
+        message: 'El modulo de pagos requiere una conexion MySQL transaccional',
+        statusCode: 503,
+      });
+    });
+  }
+
+  
+  // ERP / Finanzas: Caja, movimientos, gastos y cierres de jornada.
+  if (typeof db?.getConnection === 'function') {
+    app.use(
+      '/api/erp/cash',
+      require('./routes/erp-cash.routes')(db),
+    );
+  } else {
+    app.use('/api/erp/cash', (req, res) => {
+      res.set('Cache-Control', 'private, no-store');
+      return res.status(503).json({
+        message: 'El módulo de caja requiere una conexión MySQL transaccional',
+        statusCode: 503,
+      });
+    });
+  }
+
+  // ERP / Marketing y Ventas: Promociones.
+  // NUEVO BLOQUE: AÑADIR AQUÍ.
+  if (typeof db?.getConnection === 'function') {
+    app.use(
+      '/api/erp/promotions',
+      require('./routes/erp-promotions.routes')(db),
+    );
+  } else {
+    app.use('/api/erp/promotions', (req, res) => {
+      res.set('Cache-Control', 'private, no-store');
+      return res.status(503).json({
+        message: 'El módulo de promociones requiere una conexión MySQL transaccional',
+        statusCode: 503,
+      });
+    });
+  }
+
+    // ERP / Marketing y Ventas: alertas, seguimiento y reportes.
+  if (typeof db?.getConnection === 'function') {
+    app.use(
+      '/api/erp/marketing',
+      require('./routes/erp-marketing.routes')(db),
+    );
+  } else {
+    app.use('/api/erp/marketing', (req, res) => {
+      res.set('Cache-Control', 'private, no-store');
+
+      return res.status(503).json({
+        message: 'El módulo de Marketing requiere una conexión MySQL transaccional',
+        statusCode: 503,
+      });
+    });
+  }
+
+  // A partir de aquí continúa tu código existente.
   app.use(
     '/customers',
     require('./routes/customers.routes')(
       new Customers(customers),
+      db,
     ),
   );
+
 
   app.use(
     '/membership-plans',
     require('./routes/membership-plans.routes')(
       new Plans(plans),
+      db,
     ),
   );
 
@@ -193,6 +334,7 @@ function createApp(db, options = {}) {
         customers,
         plans,
       ),
+      db,
     ),
   );
 
@@ -204,6 +346,7 @@ function createApp(db, options = {}) {
         customers,
         memberships,
       ),
+      db,
     ),
   );
 
@@ -1075,6 +1218,8 @@ function createApp(db, options = {}) {
 
   const employeesRouter = express.Router();
 
+  employeesRouter.use(requireHrAuthentication, requireHrRole);
+
   employeesRouter.get(
     '/positions',
     async (req, res, next) => {
@@ -1528,6 +1673,8 @@ function createApp(db, options = {}) {
 
   const positionsRouter = express.Router();
 
+  positionsRouter.use(requireHrAuthentication, requireHrRole);
+
   positionsRouter.get(
     '/',
     async (req, res, next) => {
@@ -1885,6 +2032,8 @@ function createApp(db, options = {}) {
   );
 
   const shiftsRouter = express.Router();
+
+  shiftsRouter.use(requireHrAuthentication, requireHrRole);
 
   shiftsRouter.get(
     '/',
@@ -2320,6 +2469,8 @@ function createApp(db, options = {}) {
   );
 
   const attendanceRouter = express.Router();
+
+  attendanceRouter.use(requireHrAuthentication, requireHrRole);
 
   attendanceRouter.get(
     '/',
@@ -3493,6 +3644,8 @@ function createApp(db, options = {}) {
   const salariesRouter =
     express.Router();
 
+  salariesRouter.use(requireHrAuthentication, requireHrRole);
+
   salariesRouter.get(
     '/',
     async (req, res, next) => {
@@ -4296,6 +4449,8 @@ function createApp(db, options = {}) {
   const payrollsRouter =
     express.Router();
 
+  payrollsRouter.use(requireHrAuthentication, requireHrRole);
+
   payrollsRouter.get(
     '/',
     async (req, res, next) => {
@@ -5091,6 +5246,8 @@ function createApp(db, options = {}) {
   const payrollDetailsRouter =
     express.Router();
 
+  payrollDetailsRouter.use(requireHrAuthentication, requireHrRole);
+
   payrollDetailsRouter.get(
     '/',
     async (req, res, next) => {
@@ -5414,6 +5571,8 @@ function createApp(db, options = {}) {
   );
 
   const hrRouter = express.Router();
+
+  hrRouter.use(requireHrAuthentication, requireHrRole);
 
   hrRouter.get(
     '/dashboard',

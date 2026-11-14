@@ -1,238 +1,210 @@
+
 import { NavLink, useNavigate } from 'react-router-dom';
 import './Sidebar.css';
 
-const ADMIN_ROLES = [
-  'administrador',
-  'admin',
+// Se mantienen las pantallas existentes de Recursos Humanos.
+const HR_LINKS = [
+  { to: '/dashboard', label: 'Dashboard' },
+  { to: '/employees', label: 'Empleados' },
+  { to: '/positions', label: 'Cargos' },
+  { to: '/shifts', label: 'Turnos' },
+  { to: '/attendance', label: 'Asistencia' },
+  { to: '/salaries', label: 'Salarios' },
+  { to: '/payrolls', label: 'Planillas' },
+  { to: '/reports', label: 'Reportes' },
 ];
 
-const RECEPTION_ROLES = [
-  'recepcionista',
-  'recepcion',
-];
+const ADMIN_ROLES = ['administrador', 'admin'];
+const RECEPTION_ROLES = ['recepcionista', 'recepcion'];
+const HR_ROLES = ['recursos humanos', 'rrhh', 'rh'];
+const DIRECTOR_ROLES = ['director', 'direccion'];
 
-const HR_ROLES = [
-  'recursos humanos',
-  'rrhh',
-  'rh',
-];
+// Claves compartidas con Login.jsx, App.jsx y erpApi.js.
+const USER_KEY = 'user';
+const TOKEN_KEY = 'authToken';
+const TOKEN_EXPIRY_KEY = 'authTokenExpiresAt';
+const MAX_TOKEN_LENGTH = 4096;
+const MAX_USER_ID = 2147483647;
 
-const normalizeRole = (role = '') =>
-  String(role)
+function normalizeRole(value = '') {
+  return String(value ?? '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .trim()
     .replace(/[_-]+/g, ' ')
     .replace(/\s+/g, ' ');
+}
 
-const normalizeStatus = (status = '') =>
-  String(status)
-    .trim()
-    .toUpperCase();
+function isValidId(value) {
+  const id = Number(value);
+  return Number.isSafeInteger(id) && id > 0 && id <= MAX_USER_ID;
+}
 
-const roleIsIn = (role, allowedRoles) =>
-  allowedRoles
-    .map(normalizeRole)
-    .includes(normalizeRole(role));
-
-const getStoredUser = () => {
+function getJwtClaims(token) {
+  // Solo se comprueba la sesión para mostrar la interfaz.
+  // El backend valida la firma JWT, el usuario y los permisos reales.
   try {
-    const storedUser =
-      localStorage.getItem('user');
-
-    if (!storedUser) {
+    if (
+      typeof token !== 'string' ||
+      token.length > MAX_TOKEN_LENGTH ||
+      !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)
+    ) {
       return null;
     }
 
-    const user =
-      JSON.parse(storedUser);
+    const payload = token.split('.')[1];
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, '=');
+    const claims = JSON.parse(window.atob(padded));
+
+    return claims && typeof claims === 'object' && !Array.isArray(claims)
+      ? claims
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function getSessionUser() {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const rawUser = window.localStorage.getItem(USER_KEY);
+    const token = window.sessionStorage.getItem(TOKEN_KEY);
+    const rawExpiry = window.sessionStorage.getItem(TOKEN_EXPIRY_KEY);
+
+    if (!rawUser || !token || !rawExpiry) return null;
+
+    const user = JSON.parse(rawUser);
+    const claims = getJwtClaims(token);
+    const storedExpiry = Number(rawExpiry);
 
     if (
       !user ||
       typeof user !== 'object' ||
-      Array.isArray(user)
+      Array.isArray(user) ||
+      !isValidId(user.id) ||
+      typeof user.username !== 'string' ||
+      !user.username.trim() ||
+      typeof user.role !== 'string' ||
+      !user.role.trim() ||
+      (user.status && String(user.status).toUpperCase() !== 'ACTIVE') ||
+      !claims ||
+      claims.sub !== String(user.id) ||
+      claims.iss !== 'gym-mqs-api' ||
+      claims.aud !== 'gym-mqs-web' ||
+      !Number.isSafeInteger(claims.exp) ||
+      !Number.isSafeInteger(storedExpiry) ||
+      storedExpiry <= 0 ||
+      Math.min(storedExpiry, claims.exp * 1000) <= Date.now()
     ) {
-      localStorage.removeItem('user');
-      return null;
-    }
-
-    if (
-      !user.username ||
-      !user.role
-    ) {
-      localStorage.removeItem('user');
-      return null;
-    }
-
-    if (
-      user.status &&
-      normalizeStatus(
-        user.status,
-      ) === 'INACTIVE'
-    ) {
-      localStorage.removeItem('user');
       return null;
     }
 
     return user;
   } catch {
-    localStorage.removeItem('user');
     return null;
   }
-};
+}
+
+function getAreaName(role) {
+  if (ADMIN_ROLES.includes(role)) return 'Administración';
+  if (RECEPTION_ROLES.includes(role)) return 'Producción / Operaciones';
+  if (HR_ROLES.includes(role)) return 'Recursos Humanos';
+  if (DIRECTOR_ROLES.includes(role)) return 'Dirección';
+  return 'Sin área configurada';
+}
+
+function clearSession() {
+  try {
+    window.localStorage.removeItem(USER_KEY);
+  } catch {
+    // No impedir el cierre si el navegador restringe el almacenamiento.
+  }
+
+  try {
+    window.sessionStorage.removeItem(TOKEN_KEY);
+    window.sessionStorage.removeItem(TOKEN_EXPIRY_KEY);
+  } catch {
+    // El backend sigue exigiendo una sesión válida.
+  }
+
+  // App.jsx escucha este evento para comprobar nuevamente la sesión.
+  window.dispatchEvent(new Event('focus'));
+}
 
 function Sidebar() {
-  const navigate =
-    useNavigate();
+  const navigate = useNavigate();
+  const user = getSessionUser();
+  const role = normalizeRole(user?.role);
 
-  const user =
-    getStoredUser();
+  const isAdmin = ADMIN_ROLES.includes(role);
+  const isReception = RECEPTION_ROLES.includes(role);
 
-  const role =
-    normalizeRole(
-      user?.role,
-    );
-
-  const isAdmin =
-    roleIsIn(
-      role,
-      ADMIN_ROLES,
-    );
-
-  const isReception =
-    roleIsIn(
-      role,
-      RECEPTION_ROLES,
-    );
-
-  const isHr =
-    roleIsIn(
-      role,
-      HR_ROLES,
-    );
-
-  const canAccessHr =
-    isAdmin || isHr;
-
-  const canAccessOperations =
-    isAdmin || isReception;
-
-  const getAreaName = () => {
-    if (isAdmin) {
-      return 'Administración';
-    }
-
-    if (isReception) {
-      return 'Producción / Operaciones';
-    }
-
-    if (isHr) {
-      return 'Recursos Humanos';
-    }
-
-    return 'Sin área';
-  };
-
-  const getNavClass = ({
-    isActive,
-  }) =>
-    isActive
-      ? 'active'
-      : '';
+  const canAccessHr = isAdmin || HR_ROLES.includes(role);
+  const canAccessOperations = isAdmin || isReception;
+  const canAccessFinances = isAdmin || isReception;
+  const canAccessMarketing = isAdmin || isReception;
 
   const handleLogout = () => {
-    localStorage.removeItem(
-      'user',
-    );
-
-    navigate(
-      '/',
-      {
-        replace: true,
-      },
-    );
+    clearSession();
+    navigate('/', { replace: true });
   };
 
-  const hrLinks = [
-    {
-      to: '/dashboard',
-      label: 'Dashboard',
-    },
-    {
-      to: '/employees',
-      label: 'Empleados',
-    },
-    {
-      to: '/positions',
-      label: 'Cargos',
-    },
-    {
-      to: '/shifts',
-      label: 'Turnos',
-    },
-    {
-      to: '/attendance',
-      label: 'Asistencia',
-    },
-    {
-      to: '/salaries',
-      label: 'Salarios',
-    },
-    {
-      to: '/payrolls',
-      label: 'Planillas',
-    },
-    {
-      to: '/reports',
-      label: 'Reportes',
-    },
-  ];
+  const navClass = ({ isActive }) => (isActive ? 'active' : '');
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" aria-label="Menú del Gimnasio MQS">
       <div className="sidebar-logo">
-        <img
-          src="/images/logo.jpg"
-          alt="Gimnasio MQS"
-        />
-
+        <img src="/images/logo.jpg" alt="Logo Gimnasio MQS" />
         <div>
-          <strong>
-            MQS
-          </strong>
-
-          <span>
-            {getAreaName()}
-          </span>
+          <strong>MQS</strong>
+          <span>{getAreaName(role)}</span>
         </div>
       </div>
 
-      <nav className="sidebar-menu">
+      <nav className="sidebar-menu" aria-label="Navegación principal">
         {canAccessHr &&
-          hrLinks.map(
-            (link) => (
-              <NavLink
-                key={link.to}
-                to={link.to}
-                className={
-                  getNavClass
-                }
-              >
-                {link.label}
-              </NavLink>
-            ),
-          )}
+          HR_LINKS.map((link) => (
+            <NavLink
+              key={link.to}
+              to={link.to}
+              end
+              className={navClass}
+            >
+              {link.label}
+            </NavLink>
+          ))}
 
         {canAccessOperations && (
-          <NavLink
-            to="/operations"
-            className={
-              getNavClass
-            }
-          >
+          <NavLink to="/operations" end className={navClass}>
             Producción / Operaciones
           </NavLink>
+        )}
+
+        {canAccessFinances && (
+          <>
+            <NavLink to="/erp/payments" end className={navClass}>
+              Finanzas / Pagos
+            </NavLink>
+
+            <NavLink to="/erp/cash" end className={navClass}>
+              Finanzas / Caja
+            </NavLink>
+          </>
+        )}
+
+        {canAccessMarketing && (
+          <>
+            <NavLink to="/erp/promotions" end className={navClass}>
+              Marketing y Ventas / Promociones
+            </NavLink>
+
+            <NavLink to="/erp/marketing" end className={navClass}>
+              Marketing y Ventas / Alertas y Seguimientos
+            </NavLink>
+          </>
         )}
       </nav>
 
@@ -240,41 +212,20 @@ function Sidebar() {
         {user && (
           <div
             style={{
-              marginBottom:
-                '12px',
-              fontSize:
-                '13px',
-              opacity:
-                0.8,
-              lineHeight:
-                1.45,
-              wordBreak:
-                'break-word',
+              marginBottom: '12px',
+              fontSize: '13px',
+              opacity: 0.8,
+              lineHeight: 1.45,
+              overflowWrap: 'anywhere',
             }}
+            aria-label="Usuario de la sesión"
           >
-            <div
-              style={{
-                fontWeight:
-                  600,
-              }}
-            >
-              {user.username ||
-                'Usuario'}
-            </div>
-
-            <div>
-              {user.role ||
-                'Sin rol'}
-            </div>
+            <div style={{ fontWeight: 600 }}>{user.username}</div>
+            <div>{user.role}</div>
           </div>
         )}
 
-        <button
-          type="button"
-          onClick={
-            handleLogout
-          }
-        >
+        <button type="button" onClick={handleLogout}>
           Cerrar sesión
         </button>
       </div>
