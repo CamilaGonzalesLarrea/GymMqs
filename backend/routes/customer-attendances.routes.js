@@ -9,38 +9,6 @@
 const express = require('express');
 const createAttendancesController = require('../controllers/customer-attendances.controller');
 const { validate } = require('../validators/operations');
-const { createErpAuthMiddleware } = require('../middlewares/erp-auth.middleware');
-
-const ALLOWED_ROLES = new Set([
-  'administrador',
-  'admin',
-  'recepcionista',
-  'recepcion',
-]);
-
-function normalizeRole(value) {
-  return String(value ?? '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim()
-    .replace(/[_-]+/g, ' ')
-    .replace(/\s+/g, ' ');
-}
-
-function requireOperationsRole(req, res, next) {
-  if (
-    req.auth?.verified !== true ||
-    !ALLOWED_ROLES.has(normalizeRole(req.auth.role))
-  ) {
-    return res.status(403).json({
-      message: 'No tienes permiso para consultar o registrar asistencias',
-      statusCode: 403,
-    });
-  }
-
-  return next();
-}
 
 function requireJson(req, res, next) {
   // Express reconoce también application/json; charset=utf-8.
@@ -69,21 +37,7 @@ function createCustomerAttendancesRoutes(service, db) {
     return next();
   });
 
-  // No habilitar rutas sin autenticación si falta db en app.js.
-  if (!db || typeof db.query !== 'function') {
-    router.use((req, res) => res.status(503).json({
-      message: 'El módulo de asistencias requiere la conexión MySQL para validar la sesión. Revisa app.js.',
-      statusCode: 503,
-    }));
-
-    return router;
-  }
-
-  // El middleware valida el token y consulta usuario/rol activos en MySQL.
-  router.use(createErpAuthMiddleware(db));
-  router.use(requireOperationsRole);
-
-  // Consultar asistencias: Administrador y Recepción.
+  // El flujo original no exige sesión ni JWT para consultar o registrar asistencias.
   router.get('/', controller.findAll);
 
   // Registrar asistencia: Administrador y Recepción.

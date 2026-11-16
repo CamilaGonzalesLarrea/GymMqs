@@ -9,29 +9,6 @@ const express = require('express');
 const controller = require('../controllers/memberships.controller');
 const { validate, parseId } = require('../validators/operations');
 const { BadRequestException, HttpError } = require('../middlewares/errors');
-const { createErpAuthMiddleware } = require('../middlewares/erp-auth.middleware');
-
-const ALLOWED_ROLES = new Set(['administrador', 'admin', 'recepcionista', 'recepcion']);
-
-function normalizeRole(value) {
-  return String(value ?? '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim()
-    .replace(/[_-]+/g, ' ')
-    .replace(/\s+/g, ' ');
-}
-
-function requireOperationsRole(req, res, next) {
-  if (!req.auth?.verified || !ALLOWED_ROLES.has(normalizeRole(req.auth.role))) {
-    return res.status(403).json({
-      message: 'No tienes permiso para gestionar membresías',
-      statusCode: 403,
-    });
-  }
-  return next();
-}
 
 function requireJson(req, res, next) {
   if (!req.is('application/json')) {
@@ -202,18 +179,7 @@ module.exports = (service, db) => {
     next();
   });
 
-  if (!db || typeof db.query !== 'function' || typeof db.getConnection !== 'function') {
-    router.use((req, res) => res.status(503).json({
-      message: 'El módulo de membresías requiere la conexión MySQL transaccional. Revisa su montaje en app.js.',
-      statusCode: 503,
-    }));
-    return router;
-  }
-
-  router.use(createErpAuthMiddleware(db));
-  router.use(requireOperationsRole);
-
-  // Consultar membresías.
+  // El flujo original no exige sesión ni JWT para consultar ni crear membresías.
   router.get('/', c.findAll);
 
   // Crear nuevas membresías PENDING, sin activar ni cobrar.

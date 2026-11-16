@@ -152,7 +152,11 @@ exports.createAuthController = (db, verify = argon2.verify) => {
         return res.status(500).json({ message: 'No se pudo completar la autenticación' });
       }
 
-      if (!user || !passwordMatches || !accountIsEnabled(user)) {
+      if (!user) {
+        return res.status(404).json({ message: 'Usuario no encontrado' });
+      }
+
+      if (!passwordMatches || !accountIsEnabled(user)) {
         return res.status(401).json({ message: INVALID_CREDENTIALS });
       }
 
@@ -179,7 +183,7 @@ exports.createAuthController = (db, verify = argon2.verify) => {
           username: user.username,
           role: user.role,
           id_role: Number(user.id_role),
-          status: 'ACTIVE',
+          status: user.status,
         },
         token,
         token_type: 'Bearer',

@@ -21,6 +21,7 @@ import ErpPayments from './pages/ErpPayments';
 import ErpCash from './pages/ErpCash';
 import ErpPromotions from './pages/ErpPromotions';
 import ErpMarketing from './pages/ErpMarketing';
+import Direccion from './pages/Direccion';
 
 // Se conservan los roles y rutas existentes del gimnasio.
 // Se incorporan las pantallas de Finanzas / Pagos y Caja sin alterar
@@ -29,12 +30,14 @@ import ErpMarketing from './pages/ErpMarketing';
 const ADMIN_ROLES = ['administrador', 'admin'];
 const RECEPTION_ROLES = ['recepcionista', 'recepcion'];
 const HR_ROLES = ['recursos humanos', 'rrhh', 'rh'];
+const DIRECTOR_ROLES = ['director', 'direccion'];
 
 const HR_ACCESS_ROLES = [...ADMIN_ROLES, ...HR_ROLES];
 const OPERATIONS_ACCESS_ROLES = [...ADMIN_ROLES, ...RECEPTION_ROLES];
 const PAYMENTS_ACCESS_ROLES = [...ADMIN_ROLES, ...RECEPTION_ROLES];
 const CASH_ACCESS_ROLES = [...ADMIN_ROLES, ...RECEPTION_ROLES];
 const MARKETING_ACCESS_ROLES = [...ADMIN_ROLES, ...RECEPTION_ROLES];
+const DIRECTION_ACCESS_ROLES = [...ADMIN_ROLES, ...DIRECTOR_ROLES];
 
 // Claves utilizadas también por Login.jsx y Sidebar.jsx.
 const USER_KEY = 'user';
@@ -261,6 +264,10 @@ function RoleHome() {
     return <Navigate to="/operations" replace />;
   }
 
+  if (hasRole(role, DIRECTOR_ROLES)) {
+    return <Navigate to="/direccion" replace />;
+  }
+
   if (hasRole(role, HR_ACCESS_ROLES)) {
     return <Navigate to="/dashboard" replace />;
   }
@@ -307,6 +314,7 @@ function Unauthorized() {
   const hasHome = hasRole(user.role, [
     ...HR_ACCESS_ROLES,
     ...RECEPTION_ROLES,
+    ...DIRECTOR_ROLES,
   ]);
 
   const handleLogout = () => {
@@ -439,6 +447,15 @@ function App() {
           element={
             <ProtectedRoute allowedRoles={OPERATIONS_ACCESS_ROLES}>
               <Operations />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/direccion"
+          element={
+            <ProtectedRoute allowedRoles={DIRECTION_ACCESS_ROLES}>
+              <Direccion />
             </ProtectedRoute>
           }
         />

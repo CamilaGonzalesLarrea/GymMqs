@@ -212,12 +212,16 @@ class MembershipsService {
       );
     }
 
+    const normalizedPrice = Number(
+      numericPrice.toFixed(2),
+    ).toFixed(2);
+
     return {
       ...plan,
       duration_days: Number(
         plan.duration_days,
       ),
-      price: numericPrice,
+      price: normalizedPrice,
     };
   }
 

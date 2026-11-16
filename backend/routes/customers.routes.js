@@ -9,38 +9,7 @@ const express = require('express');
 const createCustomersController = require('../controllers/customers.controller');
 const { validate, parseId } = require('../validators/operations');
 const { BadRequestException } = require('../middlewares/errors');
-const { createErpAuthMiddleware } = require('../middlewares/erp-auth.middleware');
-
 const MAX_ID = 2147483647;
-const OPERATIONS_ROLES = new Set([
-  'administrador',
-  'admin',
-  'recepcionista',
-  'recepcion',
-]);
-
-function normalizeRole(value) {
-  return String(value ?? '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim()
-    .replace(/[_-]+/g, ' ')
-    .replace(/\s+/g, ' ');
-}
-
-function requireCustomerRole(req, res, next) {
-  if (
-    req.auth?.verified !== true ||
-    !OPERATIONS_ROLES.has(normalizeRole(req.auth.role))
-  ) {
-    return res.status(403).json({
-      message: 'No tienes permiso para gestionar clientes',
-      statusCode: 403,
-    });
-  }
-  return next();
-}
 
 function requireJson(req, res, next) {
   // Acepta application/json y application/json; charset=utf-8.
@@ -78,18 +47,7 @@ function createCustomerRoutes(service, db) {
     return next();
   });
 
-  // Nunca habilitar rutas sin autenticación si falta la conexión.
-  if (!db || typeof db.query !== 'function') {
-    router.use((req, res) => res.status(503).json({
-      message: 'El módulo de clientes requiere MySQL para validar la sesión. Revisa app.js.',
-      statusCode: 503,
-    }));
-    return router;
-  }
-
-  // Verifica firma JWT, expiración, usuario y rol activos en MySQL.
-  router.use(createErpAuthMiddleware(db));
-  router.use(requireCustomerRole);
+  // El flujo original no exige sesión ni JWT para clientes.
 
   // Se mantienen rutas, métodos, validadores y respuestas del proyecto.
   router.get('/', controller.findAll);

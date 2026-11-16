@@ -38,12 +38,24 @@ test('root, CORS, 404 and all four list routes',async()=>{
   assert.equal((await request('GET','/missing')).status,404);
  });
 });
-test('Camila login uses real Argon2, retains exact user contract and inactive-user behavior',async()=>{
+test('login returns a JWT session and rejects inactive users and roles',async()=>{
  const hash=await argon2.hash('secret');
- const db={async query(sql,params){assert.match(sql,/INNER JOIN roles/);return [params[0]==='ana'?[{id_user:3,username:'ana',password_hash:hash,status:'INACTIVE',id_role:2,role:'Recepcionista'}]:[]];}};
+ const users={
+  ana:{id_user:3,username:'ana',password_hash:hash,status:'ACTIVE',id_role:2,role:'Recepcionista',role_status:'ACTIVE'},
+  inactive:{id_user:4,username:'inactive',password_hash:hash,status:'INACTIVE',id_role:2,role:'Recepcionista',role_status:'ACTIVE'},
+  'inactive-role':{id_user:5,username:'inactive-role',password_hash:hash,status:'ACTIVE',id_role:3,role:'Director',role_status:'INACTIVE'},
+ };
+ const db={async query(sql,params){assert.match(sql,/INNER JOIN roles/);return [users[params[0]]?[users[params[0]]]:[]];}};
  await http(db,async request=>{
-  assert.deepEqual(await request('POST','/api/auth/login',{username:'ana',password:'secret'}).then(r=>({status:r.status,data:r.data})),{status:200,data:{message:'Login correcto',user:{id:3,username:'ana',role:'Recepcionista',id_role:2}}});
+  const login=await request('POST','/api/auth/login',{username:'ana',password:'secret'});
+  assert.equal(login.status,200);
+  assert.deepEqual(login.data.user,{id:3,username:'ana',role:'Recepcionista',id_role:2,status:'ACTIVE'});
+  assert.match(login.data.token,/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+  assert.equal(login.data.token_type,'Bearer');
+  assert.equal(login.data.expires_in,7200);
   assert.equal((await request('POST','/api/auth/login',{username:'ana',password:'wrong'})).status,401);
+  assert.equal((await request('POST','/api/auth/login',{username:'inactive',password:'secret'})).status,401);
+  assert.equal((await request('POST','/api/auth/login',{username:'inactive-role',password:'secret'})).status,401);
   assert.equal((await request('POST','/api/auth/login',{username:'missing',password:'secret'})).data.message,'Usuario no encontrado');
   assert.equal((await request('POST','/api/auth/login',{})).status,400);
  });

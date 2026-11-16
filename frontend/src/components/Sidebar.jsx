@@ -141,11 +141,13 @@ function Sidebar() {
 
   const isAdmin = ADMIN_ROLES.includes(role);
   const isReception = RECEPTION_ROLES.includes(role);
+  const isDirector = DIRECTOR_ROLES.includes(role);
 
   const canAccessHr = isAdmin || HR_ROLES.includes(role);
   const canAccessOperations = isAdmin || isReception;
   const canAccessFinances = isAdmin || isReception;
   const canAccessMarketing = isAdmin || isReception;
+  const canAccessDirection = isAdmin || isDirector;
 
   const handleLogout = () => {
     clearSession();
@@ -180,6 +182,12 @@ function Sidebar() {
         {canAccessOperations && (
           <NavLink to="/operations" end className={navClass}>
             Producción / Operaciones
+          </NavLink>
+        )}
+
+        {canAccessDirection && (
+          <NavLink to="/direccion" end className={navClass}>
+            Dirección
           </NavLink>
         )}
 
