@@ -1,0 +1,315 @@
+.direction-attendance {
+  min-width: 0;
+  color: #f6f6f7;
+}
+
+.direction-attendance-heading,
+.direction-attendance-search,
+.direction-attendance-period {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.direction-attendance-heading {
+  align-items: center;
+  justify-content: space-between;
+  margin: 8px 0 18px;
+}
+
+.direction-attendance-heading h2 {
+  margin: 6px 0;
+  font-size: 22px;
+}
+
+.direction-attendance-heading p,
+.direction-attendance-caption,
+.direction-attendance-note,
+.direction-attendance-panel p {
+  color: #a3a3ad;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.direction-attendance-heading p {
+  margin: 0;
+}
+
+.direction-attendance-kicker {
+  color: #f0476b;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1.6px;
+}
+
+.direction-attendance button,
+.direction-attendance select,
+.direction-attendance input {
+  font: inherit;
+}
+
+.direction-attendance-heading > button,
+.direction-attendance-period > button,
+.direction-attendance-search > button,
+.direction-attendance-range-submit > button {
+  min-height: 37px;
+  padding: 8px 13px;
+  border: 1px solid #d21c48;
+  border-radius: 7px;
+  background: #c00030;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.direction-attendance button:hover:not(:disabled) {
+  filter: brightness(1.13);
+}
+
+.direction-attendance-tabs {
+  display: flex;
+  gap: 7px;
+  margin: 0 0 18px;
+  padding-bottom: 9px;
+  overflow-x: auto;
+  border-bottom: 1px solid #303037;
+}
+
+.direction-attendance-tabs button,
+.direction-attendance-pager button,
+.direction-attendance-customer-options button {
+  flex: 0 0 auto;
+  padding: 8px 11px;
+  border: 1px solid #34343b;
+  border-radius: 7px;
+  background: #151517;
+  color: #b7b7c0;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.direction-attendance-tabs button.active,
+.direction-attendance-tabs button:hover {
+  border-color: #c00030;
+  background: #30141c;
+  color: #fff;
+}
+
+.direction-attendance-period,
+.direction-attendance-search {
+  margin: 14px 0;
+}
+
+.direction-attendance-period label,
+.direction-attendance-search label {
+  display: grid;
+  gap: 6px;
+  min-width: 170px;
+  color: #b7b7c0;
+  font-size: 11px;
+}
+
+.direction-attendance-period input,
+.direction-attendance-period select,
+.direction-attendance-search input,
+.direction-attendance-search select {
+  min-height: 36px;
+  padding: 7px 9px;
+  border: 1px solid #393940;
+  border-radius: 6px;
+  background: #101012;
+  color: #f5f5f6;
+}
+
+.direction-attendance-metrics,
+.direction-attendance-customer-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+  gap: 11px;
+  margin: 14px 0;
+}
+
+.direction-attendance-metric {
+  min-width: 0;
+  min-height: 90px;
+  padding: 13px;
+  border: 1px solid #303037;
+  border-left: 3px solid #c00030;
+  border-radius: 9px;
+  background: #151517;
+}
+
+.direction-attendance-metric.green { border-left-color: #42c985; }
+.direction-attendance-metric.blue { border-left-color: #6aa7ff; }
+.direction-attendance-metric.amber { border-left-color: #f0b44d; }
+
+.direction-attendance-metric span {
+  display: block;
+  min-height: 28px;
+  margin-bottom: 7px;
+  color: #a7a7b0;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.direction-attendance-metric strong {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 18px;
+}
+
+.direction-attendance-caption {
+  margin: 11px 0;
+}
+
+.direction-attendance-note {
+  margin: 10px 0 15px;
+  padding: 10px 12px;
+  border-left: 2px solid #6a4650;
+  background: #151517;
+}
+
+.direction-attendance-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 13px;
+}
+
+.direction-attendance-panel {
+  min-width: 0;
+  padding: 15px;
+  border: 1px solid #303037;
+  border-radius: 9px;
+  background: #141416;
+}
+
+.direction-attendance-panel h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.direction-attendance-panel p {
+  margin: 6px 0;
+}
+
+.direction-attendance-chart-scroll,
+.direction-attendance-table-scroll {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.direction-attendance-chart {
+  display: block;
+  width: 100%;
+  min-width: 480px;
+  height: auto;
+}
+
+.direction-attendance-gridline {
+  stroke: #303037;
+  stroke-width: 1;
+}
+
+.direction-attendance-bar {
+  fill: #d2254d;
+}
+
+.direction-attendance-axis-label {
+  fill: #9898a2;
+  font-size: 10px;
+}
+
+.direction-attendance-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.direction-attendance-table th,
+.direction-attendance-table td {
+  padding: 10px 9px;
+  border-bottom: 1px solid #2e2e34;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.direction-attendance-table th {
+  color: #f0476b;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.direction-attendance-table td {
+  color: #d4d4d9;
+}
+
+.direction-attendance-empty,
+.direction-attendance-message {
+  padding: 12px;
+  border: 1px solid #303037;
+  border-radius: 7px;
+  background: #151517;
+  color: #b7b7c0;
+  font-size: 12px;
+}
+
+.direction-attendance-message.error {
+  border-color: #963349;
+  background: #351920;
+  color: #ffd5df;
+}
+
+.direction-attendance-customer-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 10px 0;
+}
+
+.direction-attendance-customer-options button {
+  text-align: left;
+}
+
+.direction-attendance-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 13px 0;
+  color: #a3a3ad;
+  font-size: 11px;
+}
+
+.direction-attendance-pager button:disabled {
+  cursor: not-allowed;
+  opacity: .5;
+}
+
+.direction-attendance-range-submit {
+  margin: -4px 0 12px;
+}
+
+@media (max-width: 920px) {
+  .direction-attendance-chart-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 700px) {
+  .direction-attendance-heading {
+    align-items: flex-start;
+  }
+
+  .direction-attendance-period,
+  .direction-attendance-search {
+    align-items: stretch;
+  }
+
+  .direction-attendance-period label,
+  .direction-attendance-search label {
+    flex: 1 1 100%;
+  }
+}

@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Sidebar from '../components/Sidebar';
 import { erpRequest } from '../config/erpApi';
 import DireccionConsultas from './DireccionConsultas';
+import DireccionFinanzas from './DireccionFinanzas';
+import DireccionAsistencias from './DireccionAsistencias';
+import DireccionMarketing from './DireccionMarketing';
 import './Direccion.css';
 
 const MONEY = new Intl.NumberFormat('es-BO', {
@@ -267,6 +270,9 @@ function Direccion() {
             ['plans', 'Planes'],
             ['expiring', 'Próximos vencimientos'],
             ['renewals', 'Renovaciones'],
+            ['finance', 'Pagos, Finanzas y Caja'],
+            ['attendance', 'Asistencia y Actividad'],
+            ['marketing', 'Marketing y seguimiento'],
           ].map(([view, label]) => (
             <button
               key={view}
@@ -280,9 +286,13 @@ function Direccion() {
           ))}
         </nav>
 
-        {activeView !== 'dashboard' && (
+        {activeView !== 'dashboard' && activeView !== 'finance' && activeView !== 'attendance' && activeView !== 'marketing' && (
           <DireccionConsultas view={activeView} refreshKey={refreshKey} />
         )}
+
+        {activeView === 'finance' && <DireccionFinanzas refreshKey={refreshKey} />}
+        {activeView === 'attendance' && <DireccionAsistencias refreshKey={refreshKey} />}
+        {activeView === 'marketing' && <DireccionMarketing refreshKey={refreshKey} />}
 
         {activeView === 'dashboard' && (
           <>
