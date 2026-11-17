@@ -203,5 +203,14 @@ module.exports = function createErpDirectionController(service) {
         return next(error);
       }
     },
+    async getGeneralReport(req, res, next) {
+      try {
+        return res.status(200).json(
+          await service.getGeneralReport(req.params.type, req.query),
+        );
+      } catch (error) {
+        return next(error);
+      }
+    },
   };
 };

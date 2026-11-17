@@ -540,12 +540,24 @@ test('API Dirección requiere JWT y bloquea a Recepción', async () => {
     assert.equal(receptionistCommercial.status, 403);
     const anonymousCommercial = await fetch(url.replace('/dashboard', '/commercial/summary'));
     assert.equal(anonymousCommercial.status, 401);
+    const anonymousReport = await fetch(url.replace('/dashboard', '/reports/customers'));
+    assert.equal(anonymousReport.status, 401);
+    const receptionistReport = await fetch(
+    url.replace('/dashboard', '/reports/customers'),
+    { headers: { Authorization: `Bearer ${tokenFor(secret)}` } },
+    );
+    assert.equal(receptionistReport.status, 403);
     actorRole = 'Entrenador';
     const trainerAttendance = await fetch(
       url.replace('/dashboard', '/attendance/summary'),
       { headers: { Authorization: `Bearer ${tokenFor(secret)}` } },
     );
     assert.equal(trainerAttendance.status, 403);
+    const trainerReport = await fetch(
+    url.replace('/dashboard', '/reports/customers'),
+    { headers: { Authorization: `Bearer ${tokenFor(secret)}` } },
+    );
+    assert.equal(trainerReport.status, 403);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     if (previousSecret === undefined) delete process.env.JWT_SECRET;
@@ -704,6 +716,293 @@ test('Director puede consultar promociones comerciales por el endpoint protegido
     assert.equal(body.items[0].status, 'ACTIVE');
     assert.equal(body.items[0].uses, 2);
     assert.match(response.headers.get('cache-control'), /no-store/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    if (previousSecret === undefined) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = previousSecret;
+  }
+});
+
+test('reporte financiero aplica filtros, paginación y la fórmula neta sin duplicar movimientos', async () => {
+  const calls = [];
+  const db = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      if (sql.includes('DATE_FORMAT(UTC_TIMESTAMP()')) {
+        return [[{ business_date: '2026-11-16', month_start: '2026-11-01' }]];
+      }
+      if (sql.includes('GROUP BY DATE_FORMAT(m.business_date')) {
+        return [[{
+          date: '2026-11-04',
+          income: '100.00',
+          expenses: '25.00',
+          reversals: '5.00',
+        }]];
+      }
+      if (sql.includes('COUNT(DISTINCT m.id_cash_movement)')) return [[{ total: 7 }]];
+      if (sql.includes('SELECT m.id_cash_movement')) {
+        return [[{ id_cash_movement: 8, movement_kind: 'PAYMENT_IN', amount: '100.00' }]];
+      }
+      if (sql.includes('AS income') && sql.includes('FROM erp_cash_movements m')) {
+        return [[{ income: '100.00', expenses: '25.00', reversals: '5.00' }]];
+      }
+      throw new Error(`Consulta financiera inesperada: ${sql}`);
+    },
+  };
+
+  const result = await new ErpDirectionService(db).getGeneralReport('finance', {
+    from: '2026-11-01',
+    to: '2026-11-16',
+    movement_kind: 'PAYMENT_IN',
+    id_payment_method: '2',
+    page: '2',
+    limit: '5',
+  });
+
+  assert.deepEqual(result.summary, {
+    income: '100.00',
+    expenses: '25.00',
+    reversals: '5.00',
+    net: '70.00',
+  });
+  assert.deepEqual(result.chart, [{
+    date: '2026-11-04',
+    income: 100,
+    expenses: 25,
+    reversals: 5,
+  }]);
+  assert.deepEqual(result.data, [{
+    id_cash_movement: 8,
+    movement_kind: 'PAYMENT_IN',
+    amount: '100.00',
+  }]);
+  assert.equal(result.page, 2);
+  assert.equal(result.limit, 5);
+  assert.equal(result.totalPages, 2);
+  const movementQueries = calls.filter(({ sql }) => sql.includes('FROM erp_cash_movements m'));
+  assert.equal(movementQueries.length, 4);
+  assert.ok(movementQueries.every(({ sql, params }) => (
+    sql.includes('m.movement_kind = ?')
+    && sql.includes('m.id_payment_method = ?')
+    && params.includes('PAYMENT_IN')
+    && params.includes(2)
+    && /^\s*SELECT\b/i.test(sql)
+  )));
+  assert.deepEqual(movementQueries.find(({ sql }) => sql.includes('COUNT(DISTINCT')).params, [
+    '2026-11-01', '2026-11-16', 'PAYMENT_IN', 2,
+  ]);
+  assert.deepEqual(movementQueries.find(({ sql }) => sql.includes('SELECT m.id_cash_movement')).params, [
+    '2026-11-01', '2026-11-16', 'PAYMENT_IN', 2, 5, 5,
+  ]);
+});
+
+test('reporte de pagos mantiene anulados separados y combina estado, método, búsqueda y página', async () => {
+  const calls = [];
+  const db = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      if (sql.includes('DATE_FORMAT(UTC_TIMESTAMP()')) {
+        return [[{ business_date: '2026-11-16', month_start: '2026-11-01' }]];
+      }
+      if (sql.includes('AS registered_amount')) {
+        return [[{
+          registered_count: 0,
+          cancelled_count: 1,
+          registered_amount: '0.00',
+          cancelled_amount: '120.00',
+        }]];
+      }
+      if (sql.includes('SELECT COUNT(*) AS total') && sql.includes('FROM payments p')) {
+        return [[{ total: 7 }]];
+      }
+      if (sql.includes('SELECT p.id_payment')) {
+        return [[{
+          id_payment: 9,
+          id_customer: 3,
+          customer_name: 'Ada Lovelace',
+          concept: 'Mensual',
+          amount: '120.00',
+          payment_method: 'Efectivo',
+          status: 'CANCELLED',
+        }]];
+      }
+      throw new Error(`Consulta de pagos inesperada: ${sql}`);
+    },
+  };
+
+  const result = await new ErpDirectionService(db).getGeneralReport('payments', {
+    from: '2026-11-01',
+    to: '2026-11-16',
+    status: 'CANCELLED',
+    id_payment_method: '2',
+    search: 'Ada',
+    page: '2',
+    limit: '5',
+  });
+
+  assert.deepEqual(result.summary, {
+    registeredCount: 0,
+    cancelledCount: 1,
+    registeredAmount: '0.00',
+    cancelledAmount: '120.00',
+  });
+  assert.equal(result.data[0].status, 'CANCELLED');
+  assert.equal(result.page, 2);
+  const reportQueries = calls.filter(({ sql }) => sql.includes('FROM payments p'));
+  assert.equal(reportQueries.length, 3);
+  assert.ok(reportQueries.every(({ sql, params }) => (
+    sql.includes('p.status = ?')
+    && sql.includes('p.id_payment_method = ?')
+    && sql.includes('CAST(p.id_payment AS CHAR) LIKE ?')
+    && params.includes('CANCELLED')
+    && params.includes(2)
+    && params.filter((value) => value === '%Ada%').length === 3
+    && /^\s*SELECT\b/i.test(sql)
+  )));
+  assert.ok(reportQueries.some(({ sql }) => (
+    sql.includes("CASE WHEN p.status = 'REGISTERED' THEN p.amount ELSE 0 END")
+    && sql.includes("CASE WHEN p.status = 'CANCELLED' THEN p.amount ELSE 0 END")
+  )));
+  assert.deepEqual(reportQueries.find(({ sql }) => sql.includes('SELECT p.id_payment')).params, [
+    '2026-11-01', '2026-11-16', 'CANCELLED', 2,
+    '%Ada%', '%Ada%', '%Ada%', 5, 5,
+  ]);
+});
+
+test('reporte de ventas agrupa membresías y cobros válidos en subconsultas independientes', async () => {
+  const calls = [];
+  const db = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      if (sql.includes('DATE_FORMAT(UTC_TIMESTAMP()')) {
+        return [[{ business_date: '2026-11-16', month_start: '2026-11-01' }]];
+      }
+      if (sql.includes('SELECT COUNT(*) AS total') && sql.includes('FROM membership_plans pl')) {
+        return [[{ total: 7 }]];
+      }
+      if (sql.includes('SELECT pl.id_plan')) {
+        return [[{
+          id_plan: 3,
+          plan_name: 'Mensual',
+          membership_count: 2,
+          recorded_value: '240.00',
+          valid_payment_count: 1,
+          collected_value: '120.00',
+        }]];
+      }
+      throw new Error(`Consulta de ventas inesperada: ${sql}`);
+    },
+  };
+
+  const result = await new ErpDirectionService(db).getGeneralReport('sales-by-plan', {
+    from: '2026-11-01',
+    to: '2026-11-16',
+    id_plan: '3',
+    page: '2',
+    limit: '5',
+  });
+
+  assert.deepEqual(result.summary, {
+    memberships: 2,
+    recordedValue: '240.00',
+    validPayments: 1,
+    collected: '120.00',
+  });
+  assert.deepEqual(result.chart, [{
+    idPlan: 3,
+    planName: 'Mensual',
+    recordedValue: 240,
+    collected: 120,
+  }]);
+  assert.equal(result.page, 2);
+  const reportQueries = calls.filter(({ sql }) => sql.includes('FROM membership_plans pl'));
+  assert.equal(reportQueries.length, 3);
+  assert.ok(reportQueries.every(({ sql, params }) => (
+    sql.includes('LEFT JOIN (')
+    && sql.includes('FROM memberships m')
+    && sql.includes('FROM payments p')
+    && sql.includes("p.status = 'REGISTERED'")
+    && sql.includes('pl.id_plan = ?')
+    && params.includes(3)
+    && !sql.includes('erp_financial_entries')
+    && !sql.includes('erp_cash_movements')
+    && /^\s*SELECT\b/i.test(sql)
+  )));
+  assert.ok(reportQueries.every(({ params }) => (
+    params.slice(0, 4).join(',') === '2026-11-01,2026-11-16,2026-11-01,2026-11-16'
+  )));
+});
+
+test('reporte general está protegido y Director solo puede consultar por GET', async () => {
+  const secret = 'direction-dashboard-test-secret-at-least-32-bytes';
+  const previousSecret = process.env.JWT_SECRET;
+  process.env.JWT_SECRET = secret;
+  const queries = [];
+  let actorRole = 'Director';
+  const db = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      if (sql.includes('FROM users AS u')) {
+        return [[{
+          id_user: 7,
+          username: 'director',
+          user_status: 'ACTIVE',
+          id_role: 4,
+          role: actorRole,
+          role_status: 'ACTIVE',
+        }]];
+      }
+      if (sql.includes('DATE_FORMAT(UTC_TIMESTAMP()')) {
+        return [[{ business_date: '2026-11-16', month_start: '2026-11-01' }]];
+      }
+      if (sql.includes('SELECT COUNT(DISTINCT c.id_customer) AS total')) {
+        return [[{ total: 1, active: 1, inactive: 0 }]];
+      }
+      if (sql.includes('SELECT c.id_customer')) {
+        return [[{
+          id_customer: 3,
+          customer_name: 'Ada Lovelace',
+          customer_status: 'ACTIVE',
+          plan_name: 'Mensual',
+          membership_status: 'ACTIVE',
+          registration_date: '2026-11-04',
+        }]];
+      }
+      throw new Error(`Consulta de reporte inesperada: ${sql}`);
+    },
+  };
+  const server = createApp(db).listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  try {
+    const url = `http://127.0.0.1:${server.address().port}/api/erp/direction/reports/customers`;
+    const anonymous = await fetch(url);
+    assert.equal(anonymous.status, 401);
+
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${tokenFor(secret)}` },
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.summary.total, 1);
+    assert.equal(body.data[0].customer_name, 'Ada Lovelace');
+    assert.match(response.headers.get('cache-control'), /no-store/);
+
+    actorRole = 'Administrador';
+    const adminResponse = await fetch(url, {
+      headers: { Authorization: `Bearer ${tokenFor(secret)}` },
+    });
+    assert.equal(adminResponse.status, 200);
+
+    const mutation = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${tokenFor(secret)}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ first_name: 'No debe crearse' }),
+    });
+    assert.equal(mutation.status, 404);
+    assert.ok(queries.every(({ sql }) => /^\s*SELECT\b/i.test(sql)));
   } finally {
     await new Promise((resolve) => server.close(resolve));
     if (previousSecret === undefined) delete process.env.JWT_SECRET;

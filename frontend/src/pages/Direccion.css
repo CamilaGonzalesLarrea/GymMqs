@@ -1,9 +1,11 @@
 .direction-page {
+  --direction-sidebar-width: 245px;
   min-height: 100vh;
   min-height: 100dvh;
   background: radial-gradient(circle at 85% 2%, rgba(192, 0, 44, .14), transparent 34%), #090909;
   color: #f6f6f7;
   font-family: 'Segoe UI', Arial, sans-serif;
+  overflow-x: hidden;
 }
 
 .direction-page,
@@ -11,11 +13,15 @@
   box-sizing: border-box;
 }
 
+.direction-page > .sidebar {
+  width: var(--direction-sidebar-width);
+}
+
 .direction-main {
   min-width: 0;
   max-width: 1780px;
   min-height: 100vh;
-  margin-left: 245px;
+  margin-left: var(--direction-sidebar-width);
   padding: 35px 38px 75px;
 }
 
@@ -73,35 +79,6 @@
 .direction-refresh:disabled {
   cursor: wait;
   opacity: .65;
-}
-
-.direction-tabs {
-  display: flex;
-  gap: 8px;
-  margin: 0 0 22px;
-  padding-bottom: 10px;
-  overflow-x: auto;
-  border-bottom: 1px solid #303037;
-}
-
-.direction-tabs button {
-  flex: 0 0 auto;
-  padding: 9px 13px;
-  border: 1px solid #34343b;
-  border-radius: 7px;
-  background: #151517;
-  color: #b7b7c0;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 650;
-  cursor: pointer;
-}
-
-.direction-tabs button:hover,
-.direction-tabs button.active {
-  border-color: #c00030;
-  background: #30141c;
-  color: #fff;
 }
 
 .direction-period {
@@ -320,7 +297,8 @@
 }
 
 @media (max-width: 760px) {
-  .direction-main { margin-left: 0; padding: 20px 14px 55px; }
+  .direction-page { --direction-sidebar-width: clamp(170px, 34vw, 245px); }
+  .direction-main { padding: 20px 14px 55px; }
   .direction-header h1 { font-size: 26px; }
   .direction-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .direction-chart-panel { padding: 16px; }

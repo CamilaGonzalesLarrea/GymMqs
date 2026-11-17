@@ -67,6 +67,7 @@ function createErpDirectionRoutes(db) {
   router.get('/commercial/renewals', controller.getCommercialRenewals);
   router.get('/commercial/alerts', controller.getCommercialAlerts);
   router.get('/commercial/followups', controller.getCommercialFollowups);
+  router.get('/reports/:type', controller.getGeneralReport);
   router.get('/dashboard', controller.getDashboard);
   return router;
 }

@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
+import { DIRECTION_LINKS } from '../config/directionNavigation';
 import { erpRequest } from '../config/erpApi';
 import DireccionConsultas from './DireccionConsultas';
 import DireccionFinanzas from './DireccionFinanzas';
 import DireccionAsistencias from './DireccionAsistencias';
 import DireccionMarketing from './DireccionMarketing';
+import DireccionReportes from './DireccionReportes';
 import './Direccion.css';
 
 const MONEY = new Intl.NumberFormat('es-BO', {
@@ -194,11 +197,15 @@ function AttendanceChart({ rows }) {
 }
 
 function Direccion() {
+  const [searchParams] = useSearchParams();
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
-  const [activeView, setActiveView] = useState('dashboard');
+  const requestedView = searchParams.get('section');
+  const activeView = DIRECTION_LINKS.some(({ section }) => section === requestedView)
+    ? requestedView
+    : 'dashboard';
 
   const loadDashboard = useCallback(async (signal) => {
     try {
@@ -263,36 +270,14 @@ function Direccion() {
           </button>
         </header>
 
-        <nav className="direction-tabs" aria-label="Secciones de Dirección">
-          {[
-            ['dashboard', 'Dashboard'],
-            ['customers', 'Clientes y membresías'],
-            ['plans', 'Planes'],
-            ['expiring', 'Próximos vencimientos'],
-            ['renewals', 'Renovaciones'],
-            ['finance', 'Pagos, Finanzas y Caja'],
-            ['attendance', 'Asistencia y Actividad'],
-            ['marketing', 'Marketing y seguimiento'],
-          ].map(([view, label]) => (
-            <button
-              key={view}
-              type="button"
-              className={activeView === view ? 'active' : ''}
-              aria-current={activeView === view ? 'page' : undefined}
-              onClick={() => setActiveView(view)}
-            >
-              {label}
-            </button>
-          ))}
-        </nav>
-
-        {activeView !== 'dashboard' && activeView !== 'finance' && activeView !== 'attendance' && activeView !== 'marketing' && (
+        {activeView !== 'dashboard' && activeView !== 'finance' && activeView !== 'attendance' && activeView !== 'marketing' && activeView !== 'reports' && (
           <DireccionConsultas view={activeView} refreshKey={refreshKey} />
         )}
 
         {activeView === 'finance' && <DireccionFinanzas refreshKey={refreshKey} />}
         {activeView === 'attendance' && <DireccionAsistencias refreshKey={refreshKey} />}
         {activeView === 'marketing' && <DireccionMarketing refreshKey={refreshKey} />}
+        {activeView === 'reports' && <DireccionReportes refreshKey={refreshKey} />}
 
         {activeView === 'dashboard' && (
           <>

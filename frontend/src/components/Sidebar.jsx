@@ -1,5 +1,6 @@
 
-import { NavLink, useNavigate } from 'react-router-dom';
+import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { DIRECTION_LINKS } from '../config/directionNavigation';
 import './Sidebar.css';
 
 // Se mantienen las pantallas existentes de Recursos Humanos.
@@ -135,9 +136,14 @@ function clearSession() {
 }
 
 function Sidebar() {
+  const location = useLocation();
   const navigate = useNavigate();
   const user = getSessionUser();
   const role = normalizeRole(user?.role);
+  const requestedDirectionSection = new URLSearchParams(location.search).get('section');
+  const activeDirectionSection = DIRECTION_LINKS.some(
+    ({ section }) => section === requestedDirectionSection,
+  ) ? requestedDirectionSection : 'dashboard';
 
   const isAdmin = ADMIN_ROLES.includes(role);
   const isReception = RECEPTION_ROLES.includes(role);
@@ -186,9 +192,23 @@ function Sidebar() {
         )}
 
         {canAccessDirection && (
-          <NavLink to="/direccion" end className={navClass}>
-            Dirección
-          </NavLink>
+          <>
+            <NavLink to="/direccion" end className={navClass}>
+              Dirección
+            </NavLink>
+            <div className="sidebar-submenu" role="group" aria-label="Secciones de Dirección">
+              {DIRECTION_LINKS.map(({ section, label }) => (
+                <Link
+                  key={section}
+                  to={section === 'dashboard' ? '/direccion' : `/direccion?section=${section}`}
+                  className={location.pathname === '/direccion' && activeDirectionSection === section ? 'active' : ''}
+                  aria-current={location.pathname === '/direccion' && activeDirectionSection === section ? 'page' : undefined}
+                >
+                  {label}
+                </Link>
+              ))}
+            </div>
+          </>
         )}
 
         {canAccessFinances && (

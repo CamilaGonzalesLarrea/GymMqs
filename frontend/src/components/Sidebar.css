@@ -144,6 +144,27 @@
     outline-offset: 2px;
 }
 
+.sidebar-submenu {
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    gap: 3px;
+    margin: -2px 0 4px 10px;
+    padding-left: 8px;
+    border-left: 1px solid #393939;
+}
+
+.sidebar-menu .sidebar-submenu a {
+    padding: 8px 9px;
+    border-radius: 6px;
+    font-size: 12px;
+}
+
+.sidebar-menu .sidebar-submenu a.active {
+    background: #30141c;
+    color: white;
+}
+
 /* PARTE INFERIOR */
 
 .sidebar-bottom {

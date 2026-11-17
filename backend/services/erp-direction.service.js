@@ -18,6 +18,14 @@ const COMMERCIAL_FOLLOWUP_REASONS = new Set(['EXPIRING', 'EXPIRED', 'LOW_ATTENDA
 const COMMERCIAL_FOLLOWUP_RESULTS = new Set([
   'PENDING', 'CONTACTED', 'RENEWAL_ACCEPTED', 'DECLINED', 'NO_RESPONSE',
 ]);
+const CUSTOMER_STATUSES = new Set(['ACTIVE', 'INACTIVE']);
+const EFFECTIVE_MEMBERSHIP_STATUSES = new Set([
+  'ACTIVE', 'EXPIRED', 'PENDING', 'CANCELLED', 'SCHEDULED',
+]);
+const REPORT_TYPES = new Set([
+  'customers', 'memberships', 'finance', 'payments', 'attendance',
+  'sales-by-plan', 'renewals', 'commercial',
+]);
 const MAX_FINANCE_RANGE_DAYS = 366;
 const MAX_ATTENDANCE_RANGE_DAYS = 366;
 const INACTIVITY_DAY_OPTIONS = new Set([7, 15, 30]);
@@ -2005,6 +2013,693 @@ class ErpDirectionService {
     return {
       from, to, page, limit, total: countValue(countRows?.[0]?.total),
       items: rows || [],
+    };
+  }
+
+  async getGeneralReport(type, query = {}) {
+    if (!REPORT_TYPES.has(type)) {
+      throw new BadRequestException('Tipo de reporte inválido');
+    }
+    if (type === 'customers') return this.getReportCustomers(query);
+    if (type === 'memberships') return this.getReportMemberships(query);
+    if (type === 'finance') return this.getReportFinance(query);
+    if (type === 'payments') return this.getReportPayments(query);
+    if (type === 'attendance') return this.getReportAttendance(query);
+    if (type === 'sales-by-plan') return this.getReportSalesByPlan(query);
+    if (type === 'renewals') return this.getReportRenewals(query);
+    return this.getReportCommercial(query);
+  }
+
+  async getReportPeriod(query) {
+    const today = await this.getToday();
+    return financeDateRange(query, {
+      from: today.month_start,
+      to: today.business_date,
+    });
+  }
+
+  async getReportCustomers(query = {}) {
+    validateQuery(query, ['from', 'to', 'page', 'limit', 'search', 'status', 'id_plan']);
+    const { from, to } = await this.getReportPeriod(query);
+    const { page, limit, offset } = pagination(query);
+    const search = searchValue(query.search);
+    const conditions = ['c.registration_date BETWEEN ? AND ?'];
+    const params = [from, to];
+
+    if (query.status !== undefined && query.status !== '') {
+      const status = String(query.status).toUpperCase();
+      if (!CUSTOMER_STATUSES.has(status)) {
+        throw new BadRequestException('Estado de cliente inválido');
+      }
+      conditions.push('c.status = ?');
+      params.push(status);
+    }
+    if (query.id_plan !== undefined && query.id_plan !== '') {
+      conditions.push('m.id_plan = ?');
+      params.push(positiveInteger(query.id_plan, 'id_plan'));
+    }
+    if (search) {
+      conditions.push(`(
+        CAST(c.id_customer AS CHAR) LIKE ?
+        OR CONCAT(c.first_name, ' ', c.last_name) LIKE ?
+      )`);
+      params.push(`%${search}%`, `%${search}%`);
+    }
+
+    const where = `WHERE ${conditions.join(' AND ')}`;
+    const [summaryRows] = await this.db.query(`
+      SELECT COUNT(DISTINCT c.id_customer) AS total,
+        COALESCE(SUM(c.status = 'ACTIVE'), 0) AS active,
+        COALESCE(SUM(c.status = 'INACTIVE'), 0) AS inactive
+      ${CUSTOMER_MEMBERSHIP_FROM}
+      ${where}
+    `, params);
+    const [rows] = await this.db.query(`
+      SELECT c.id_customer,
+        CONCAT(c.first_name, ' ', c.last_name) AS customer_name,
+        c.status AS customer_status,
+        pl.plan_name,
+        ${effectiveMembershipStatus('m')} AS membership_status,
+        DATE_FORMAT(c.registration_date, '%Y-%m-%d') AS registration_date
+      ${CUSTOMER_MEMBERSHIP_FROM}
+      ${where}
+      ORDER BY c.registration_date DESC, c.id_customer DESC
+      LIMIT ? OFFSET ?
+    `, [...params, limit, offset]);
+    const summary = summaryRows?.[0] || {};
+    const total = countValue(summary.total);
+    return {
+      from, to,
+      summary: {
+        total,
+        active: countValue(summary.active),
+        inactive: countValue(summary.inactive),
+      },
+      data: rows || [],
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  async getReportMemberships(query = {}) {
+    validateQuery(query, ['from', 'to', 'page', 'limit', 'search', 'status', 'id_plan']);
+    const { from, to } = await this.getReportPeriod(query);
+    const { page, limit, offset } = pagination(query);
+    const search = searchValue(query.search);
+    const conditions = ['m.start_date BETWEEN ? AND ?'];
+    const params = [from, to];
+
+    if (query.status !== undefined && query.status !== '') {
+      const status = String(query.status).toUpperCase();
+      if (!EFFECTIVE_MEMBERSHIP_STATUSES.has(status)) {
+        throw new BadRequestException('Estado de membresía inválido');
+      }
+      conditions.push(`(${effectiveMembershipStatus('m')}) = ?`);
+      params.push(status);
+    }
+    if (query.id_plan !== undefined && query.id_plan !== '') {
+      conditions.push('m.id_plan = ?');
+      params.push(positiveInteger(query.id_plan, 'id_plan'));
+    }
+    if (search) {
+      conditions.push(`(
+        CAST(c.id_customer AS CHAR) LIKE ?
+        OR CONCAT(c.first_name, ' ', c.last_name) LIKE ?
+      )`);
+      params.push(`%${search}%`, `%${search}%`);
+    }
+
+    const where = `WHERE ${conditions.join(' AND ')}`;
+    const source = `FROM memberships m
+      JOIN customers c ON c.id_customer = m.id_customer
+      JOIN membership_plans pl ON pl.id_plan = m.id_plan
+      ${where}`;
+    const [summaryRows] = await this.db.query(`
+      SELECT ${effectiveMembershipStatus('m')} AS status,
+        COUNT(*) AS total, COALESCE(SUM(m.applied_price), 0) AS recorded_value
+      ${source}
+      GROUP BY status
+      ORDER BY status
+    `, params);
+    const [rows] = await this.db.query(`
+      SELECT m.id_membership, c.id_customer,
+        CONCAT(c.first_name, ' ', c.last_name) AS customer_name,
+        pl.plan_name,
+        DATE_FORMAT(m.start_date, '%Y-%m-%d') AS start_date,
+        DATE_FORMAT(m.end_date, '%Y-%m-%d') AS end_date,
+        ${effectiveMembershipStatus('m')} AS effective_status,
+        m.applied_price
+      ${source}
+      ORDER BY m.start_date DESC, m.id_membership DESC
+      LIMIT ? OFFSET ?
+    `, [...params, limit, offset]);
+    const summary = (summaryRows || []).reduce((result, row) => {
+      result.total += countValue(row.total);
+      result.recordedCents += decimalCents(row.recorded_value);
+      result.byStatus.push({
+        status: String(row.status || '').toUpperCase(),
+        total: countValue(row.total),
+      });
+      return result;
+    }, { total: 0, recordedCents: 0n, byStatus: [] });
+    return {
+      from, to,
+      summary: {
+        total: summary.total,
+        recordedValue: decimalText(summary.recordedCents),
+        byStatus: summary.byStatus,
+      },
+      data: rows || [],
+      total: summary.total,
+      page,
+      limit,
+      totalPages: Math.ceil(summary.total / limit),
+    };
+  }
+
+  async getReportFinance(query = {}) {
+    validateQuery(query, ['from', 'to', 'page', 'limit', 'movement_kind', 'id_payment_method']);
+    const { from, to } = await this.getReportPeriod(query);
+    const { page, limit, offset } = pagination(query);
+    const conditions = ['m.business_date BETWEEN ? AND ?'];
+    const params = [from, to];
+
+    if (query.movement_kind !== undefined && query.movement_kind !== '') {
+      if (!MOVEMENT_TYPES.has(query.movement_kind)) {
+        throw new BadRequestException('Tipo de movimiento inválido');
+      }
+      conditions.push('m.movement_kind = ?');
+      params.push(query.movement_kind);
+    }
+    if (query.id_payment_method !== undefined && query.id_payment_method !== '') {
+      conditions.push('m.id_payment_method = ?');
+      params.push(positiveInteger(query.id_payment_method, 'id_payment_method'));
+    }
+
+    const where = `WHERE ${conditions.join(' AND ')}`;
+    const [
+      [summaryRows],
+      [chartRows],
+      detail,
+    ] = await Promise.all([
+      this.db.query(`
+        SELECT
+          COALESCE(SUM(CASE WHEN m.movement_kind IN ('PAYMENT_IN', 'OTHER_IN') THEN m.amount ELSE 0 END), 0) AS income,
+          COALESCE(SUM(CASE WHEN m.movement_kind = 'EXPENSE_OUT' THEN m.amount ELSE 0 END), 0) AS expenses,
+          COALESCE(SUM(CASE WHEN m.movement_kind = 'PAYMENT_REVERSAL' THEN m.amount ELSE 0 END), 0) AS reversals
+        FROM erp_cash_movements m
+        ${where}
+      `, params),
+      this.db.query(`
+        SELECT DATE_FORMAT(m.business_date, '%Y-%m-%d') AS date,
+          COALESCE(SUM(CASE WHEN m.movement_kind IN ('PAYMENT_IN', 'OTHER_IN') THEN m.amount ELSE 0 END), 0) AS income,
+          COALESCE(SUM(CASE WHEN m.movement_kind = 'EXPENSE_OUT' THEN m.amount ELSE 0 END), 0) AS expenses,
+          COALESCE(SUM(CASE WHEN m.movement_kind = 'PAYMENT_REVERSAL' THEN m.amount ELSE 0 END), 0) AS reversals
+        FROM erp_cash_movements m
+        ${where}
+        GROUP BY DATE_FORMAT(m.business_date, '%Y-%m-%d')
+        ORDER BY date
+      `, params),
+      this.queryFinancialMovements(conditions, params, page, limit, offset),
+    ]);
+    const row = summaryRows?.[0] || {};
+    const income = decimalCents(row.income);
+    const expenses = decimalCents(row.expenses);
+    const reversals = decimalCents(row.reversals);
+    return {
+      from, to,
+      summary: {
+        income: decimalText(income),
+        expenses: decimalText(expenses),
+        reversals: decimalText(reversals),
+        net: decimalText(income - expenses - reversals),
+      },
+      chart: (chartRows || []).map((item) => ({
+        date: String(item.date).slice(0, 10),
+        income: numericValue(item.income),
+        expenses: numericValue(item.expenses),
+        reversals: numericValue(item.reversals),
+      })),
+      ...detail,
+    };
+  }
+
+  async getReportPayments(query = {}) {
+    validateQuery(query, [
+      'from', 'to', 'page', 'limit', 'search', 'status', 'id_payment_method',
+    ]);
+    const { from, to } = await this.getReportPeriod(query);
+    const { page, limit, offset } = pagination(query);
+    const search = searchValue(query.search);
+    const conditions = ['DATE(p.payment_date - INTERVAL 4 HOUR) BETWEEN ? AND ?'];
+    const params = [from, to];
+
+    if (query.status !== undefined && query.status !== '') {
+      if (!PAYMENT_STATUSES.has(query.status)) {
+        throw new BadRequestException('Estado de pago inválido');
+      }
+      conditions.push('p.status = ?');
+      params.push(query.status);
+    }
+    if (query.id_payment_method !== undefined && query.id_payment_method !== '') {
+      conditions.push('p.id_payment_method = ?');
+      params.push(positiveInteger(query.id_payment_method, 'id_payment_method'));
+    }
+    if (search) {
+      conditions.push(`(
+        CAST(p.id_payment AS CHAR) LIKE ?
+        OR CAST(c.id_customer AS CHAR) LIKE ?
+        OR CONCAT(c.first_name, ' ', c.last_name) LIKE ?
+      )`);
+      params.push(...Array(3).fill(`%${search}%`));
+    }
+
+    const where = `WHERE ${conditions.join(' AND ')}`;
+    const [summaryRows] = await this.db.query(`
+      SELECT
+        COALESCE(SUM(p.status = 'REGISTERED'), 0) AS registered_count,
+        COALESCE(SUM(p.status = 'CANCELLED'), 0) AS cancelled_count,
+        COALESCE(SUM(CASE WHEN p.status = 'REGISTERED' THEN p.amount ELSE 0 END), 0) AS registered_amount,
+        COALESCE(SUM(CASE WHEN p.status = 'CANCELLED' THEN p.amount ELSE 0 END), 0) AS cancelled_amount
+      ${PAYMENT_FROM}
+      ${where}
+    `, params);
+    const [countRows] = await this.db.query(`
+      SELECT COUNT(*) AS total ${PAYMENT_FROM} ${where}
+    `, params);
+    const [rows] = await this.db.query(`
+      SELECT p.id_payment, c.id_customer,
+        CONCAT(c.first_name, ' ', c.last_name) AS customer_name,
+        pl.plan_name AS concept, p.amount,
+        DATE_FORMAT(p.payment_date - INTERVAL 4 HOUR, '%Y-%m-%d %H:%i:%s') AS payment_date,
+        pm.name AS payment_method, p.status
+      ${PAYMENT_FROM}
+      ${where}
+      ORDER BY p.payment_date DESC, p.id_payment DESC
+      LIMIT ? OFFSET ?
+    `, [...params, limit, offset]);
+    const totals = summaryRows?.[0] || {};
+    const total = countValue(countRows?.[0]?.total);
+    return {
+      from, to,
+      summary: {
+        registeredCount: countValue(totals.registered_count),
+        cancelledCount: countValue(totals.cancelled_count),
+        registeredAmount: decimalText(decimalCents(totals.registered_amount)),
+        cancelledAmount: decimalText(decimalCents(totals.cancelled_amount)),
+      },
+      data: rows || [],
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  async getReportAttendance(query = {}) {
+    validateQuery(query, ['from', 'to', 'page', 'limit', 'search']);
+    const { from, to } = await this.getReportPeriod(query);
+    const { page, limit, offset } = pagination(query);
+    const search = searchValue(query.search);
+    const conditions = ['a.attendance_date BETWEEN ? AND ?'];
+    const params = [from, to];
+    if (search) {
+      conditions.push(`(
+        CAST(c.id_customer AS CHAR) LIKE ?
+        OR CONCAT(c.first_name, ' ', c.last_name) LIKE ?
+      )`);
+      params.push(`%${search}%`, `%${search}%`);
+    }
+    const where = `WHERE ${conditions.join(' AND ')}`;
+    const source = `FROM customer_attendances a
+      JOIN customers c ON c.id_customer = a.id_customer
+      ${where}`;
+    const [summaryRows] = await this.db.query(`
+      SELECT COUNT(*) AS total,
+        COUNT(DISTINCT a.id_customer) AS unique_customers
+      ${source}
+    `, params);
+    const [dailyRows] = await this.db.query(`
+      SELECT DATE_FORMAT(a.attendance_date, '%Y-%m-%d') AS date, COUNT(*) AS total
+      ${source}
+      GROUP BY DATE_FORMAT(a.attendance_date, '%Y-%m-%d')
+      ORDER BY date
+    `, params);
+    const [rows] = await this.db.query(`
+      SELECT a.id_attendance, a.attendance_date, a.entry_time,
+        c.id_customer, CONCAT(c.first_name, ' ', c.last_name) AS customer_name
+      ${source}
+      ORDER BY a.attendance_date DESC, a.entry_time DESC, a.id_attendance DESC
+      LIMIT ? OFFSET ?
+    `, [...params, limit, offset]);
+    const summary = summaryRows?.[0] || {};
+    const total = countValue(summary.total);
+    return {
+      from, to,
+      summary: {
+        total,
+        uniqueCustomers: countValue(summary.unique_customers),
+      },
+      chart: (dailyRows || []).map((row) => ({
+        date: String(row.date).slice(0, 10),
+        total: countValue(row.total),
+      })),
+      data: rows || [],
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  async getReportSalesByPlan(query = {}) {
+    validateQuery(query, ['from', 'to', 'page', 'limit', 'id_plan']);
+    const { from, to } = await this.getReportPeriod(query);
+    const { page, limit, offset } = pagination(query);
+    const conditions = [];
+    const params = [from, to, from, to];
+    if (query.id_plan !== undefined && query.id_plan !== '') {
+      conditions.push('pl.id_plan = ?');
+      params.push(positiveInteger(query.id_plan, 'id_plan'));
+    }
+    const planWhere = conditions.length ? `AND ${conditions.join(' AND ')}` : '';
+    const source = `
+      FROM membership_plans pl
+      LEFT JOIN (
+        SELECT m.id_plan, COUNT(*) AS membership_count,
+          COALESCE(SUM(m.applied_price), 0) AS recorded_value
+        FROM memberships m
+        WHERE COALESCE(m.status, '') <> 'CANCELLED'
+          AND DATE(m.creationDate - INTERVAL 4 HOUR) BETWEEN ? AND ?
+        GROUP BY m.id_plan
+      ) sales ON sales.id_plan = pl.id_plan
+      LEFT JOIN (
+        SELECT m.id_plan, COUNT(DISTINCT p.id_payment) AS payment_count,
+          COALESCE(SUM(p.amount), 0) AS collected_value
+        FROM payments p
+        JOIN memberships m ON m.id_membership = p.id_membership
+        WHERE p.status = 'REGISTERED'
+          AND DATE(p.payment_date - INTERVAL 4 HOUR) BETWEEN ? AND ?
+        GROUP BY m.id_plan
+      ) paid ON paid.id_plan = pl.id_plan
+      WHERE (COALESCE(sales.membership_count, 0) > 0
+        OR COALESCE(paid.payment_count, 0) > 0)
+      ${planWhere}
+    `;
+    const [countRows] = await this.db.query(
+      `SELECT COUNT(*) AS total ${source}`,
+      params,
+    );
+    const selectRows = `
+      SELECT pl.id_plan, pl.plan_name,
+        COALESCE(sales.membership_count, 0) AS membership_count,
+        COALESCE(sales.recorded_value, 0) AS recorded_value,
+        COALESCE(paid.payment_count, 0) AS valid_payment_count,
+        COALESCE(paid.collected_value, 0) AS collected_value
+      ${source}
+      ORDER BY membership_count DESC, recorded_value DESC, pl.plan_name
+    `;
+    const [[rows], [chartRows]] = await Promise.all([
+      this.db.query(`${selectRows} LIMIT ? OFFSET ?`, [...params, limit, offset]),
+      this.db.query(selectRows, params),
+    ]);
+    let memberships = 0;
+    let validPayments = 0;
+    let recordedCents = 0n;
+    let collectedCents = 0n;
+    for (const row of chartRows || []) {
+      memberships += countValue(row.membership_count);
+      validPayments += countValue(row.valid_payment_count);
+      recordedCents += decimalCents(row.recorded_value);
+      collectedCents += decimalCents(row.collected_value);
+    }
+    const total = countValue(countRows?.[0]?.total);
+    return {
+      from, to,
+      summary: {
+        memberships,
+        recordedValue: decimalText(recordedCents),
+        validPayments,
+        collected: decimalText(collectedCents),
+      },
+      chart: (chartRows || []).map((row) => ({
+        idPlan: countValue(row.id_plan),
+        planName: row.plan_name,
+        recordedValue: numericValue(row.recorded_value),
+        collected: numericValue(row.collected_value),
+      })),
+      data: rows || [],
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  async getReportRenewals(query = {}) {
+    validateQuery(query, ['from', 'to', 'page', 'limit', 'search', 'status']);
+    const { from, to } = await this.getReportPeriod(query);
+    const { page, limit, offset } = pagination(query);
+    const search = searchValue(query.search);
+    const conditions = ['DATE(r.requested_at - INTERVAL 4 HOUR) BETWEEN ? AND ?'];
+    const params = [from, to];
+    let status = '';
+    if (query.status !== undefined && query.status !== '') {
+      status = String(query.status).toUpperCase();
+      if (!RENEWAL_STATUSES.has(status)) {
+        throw new BadRequestException('Estado de renovación inválido');
+      }
+      conditions.push('r.status = ?');
+      params.push(status);
+    }
+    if (search) {
+      conditions.push(`(
+        CAST(c.id_customer AS CHAR) LIKE ?
+        OR CONCAT(c.first_name, ' ', c.last_name) LIKE ?
+        OR CAST(r.id_previous_membership AS CHAR) LIKE ?
+        OR CAST(r.id_new_membership AS CHAR) LIKE ?
+      )`);
+      params.push(...Array(4).fill(`%${search}%`));
+    }
+    const where = `WHERE ${conditions.join(' AND ')}`;
+    const source = `FROM erp_renewal_requests r
+      JOIN customers c ON c.id_customer = r.id_customer
+      JOIN memberships previous ON previous.id_membership = r.id_previous_membership
+      JOIN membership_plans previous_plan ON previous_plan.id_plan = previous.id_plan
+      LEFT JOIN memberships newer ON newer.id_membership = r.id_new_membership
+      LEFT JOIN membership_plans next_plan ON next_plan.id_plan = newer.id_plan
+      ${where}`;
+    const [summaryRows] = await this.db.query(`
+      SELECT r.status, COUNT(*) AS total
+      ${source}
+      GROUP BY r.status
+      ORDER BY r.status
+    `, params);
+    const [countRows] = await this.db.query(`SELECT COUNT(*) AS total ${source}`, params);
+    const [rows] = await this.db.query(`
+      SELECT r.id_renewal_request, c.id_customer,
+        CONCAT(c.first_name, ' ', c.last_name) AS customer_name,
+        COALESCE(next_plan.plan_name, previous_plan.plan_name) AS plan_name,
+        DATE_FORMAT(r.requested_at - INTERVAL 4 HOUR, '%Y-%m-%d %H:%i') AS requested_at,
+        DATE_FORMAT(r.completed_at - INTERVAL 4 HOUR, '%Y-%m-%d %H:%i') AS completed_at,
+        r.status
+      ${source}
+      ORDER BY r.requested_at DESC, r.id_renewal_request DESC
+      LIMIT ? OFFSET ?
+    `, [...params, limit, offset]);
+
+    let completed = 0;
+    if (!status || status === 'COMPLETED') {
+      const completedConditions = [
+        "r.status = 'COMPLETED'",
+        'DATE(r.completed_at - INTERVAL 4 HOUR) BETWEEN ? AND ?',
+      ];
+      const completedParams = [from, to];
+      if (search) {
+        completedConditions.push(`(
+          CAST(c.id_customer AS CHAR) LIKE ?
+          OR CONCAT(c.first_name, ' ', c.last_name) LIKE ?
+          OR CAST(r.id_previous_membership AS CHAR) LIKE ?
+          OR CAST(r.id_new_membership AS CHAR) LIKE ?
+        )`);
+        completedParams.push(...Array(4).fill(`%${search}%`));
+      }
+      const [completedRows] = await this.db.query(`
+        SELECT COUNT(*) AS total
+        FROM erp_renewal_requests r
+        JOIN customers c ON c.id_customer = r.id_customer
+        WHERE ${completedConditions.join(' AND ')}
+      `, completedParams);
+      completed = countValue(completedRows?.[0]?.total);
+    }
+    const total = countValue(countRows?.[0]?.total);
+    return {
+      from, to,
+      summary: {
+        total,
+        completed,
+        byStatus: (summaryRows || []).map((row) => ({
+          status: String(row.status || '').toUpperCase(),
+          total: countValue(row.total),
+        })),
+      },
+      data: rows || [],
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  async getReportCommercial(query = {}) {
+    const section = query.section || 'alerts';
+    if (!['alerts', 'followups'].includes(section)) {
+      throw new BadRequestException('Sección comercial inválida');
+    }
+    validateQuery(query, section === 'alerts'
+      ? ['section', 'from', 'to', 'page', 'limit', 'search', 'status', 'alert_type']
+      : ['section', 'from', 'to', 'page', 'limit', 'search', 'status', 'result', 'reason']);
+    const { from, to } = await this.getReportPeriod(query);
+    const { page, limit, offset } = pagination(query);
+    const search = searchValue(query.search);
+    const conditions = [];
+    const params = [];
+    if (section === 'alerts') {
+      conditions.push('DATE(al.created_at - INTERVAL 4 HOUR) BETWEEN ? AND ?');
+      params.push(from, to);
+      if (query.status !== undefined && query.status !== '') {
+        const status = String(query.status).toUpperCase();
+        if (!COMMERCIAL_ALERT_STATES.has(status)) {
+          throw new BadRequestException('Estado de alerta inválido');
+        }
+        conditions.push('al.status = ?');
+        params.push(status);
+      }
+      if (query.alert_type !== undefined && query.alert_type !== '') {
+        const type = String(query.alert_type).toUpperCase();
+        if (!COMMERCIAL_ALERT_TYPES.has(type)) {
+          throw new BadRequestException('Tipo de alerta inválido');
+        }
+        conditions.push('al.alert_type = ?');
+        params.push(type);
+      }
+      if (search) {
+        conditions.push(`(
+          CAST(c.id_customer AS CHAR) LIKE ?
+          OR CONCAT(c.first_name, ' ', c.last_name) LIKE ?
+        )`);
+        params.push(`%${search}%`, `%${search}%`);
+      }
+      const where = `WHERE ${conditions.join(' AND ')}`;
+      const source = `FROM erp_membership_alerts al
+        JOIN memberships m ON m.id_membership = al.id_membership
+        JOIN customers c ON c.id_customer = m.id_customer
+        JOIN membership_plans pl ON pl.id_plan = m.id_plan
+        ${where}`;
+      const [summaryRows] = await this.db.query(`
+        SELECT al.alert_type AS type, al.status, COUNT(*) AS total
+        ${source}
+        GROUP BY al.alert_type, al.status
+        ORDER BY al.alert_type, al.status
+      `, params);
+      const [countRows] = await this.db.query(`SELECT COUNT(*) AS total ${source}`, params);
+      const [rows] = await this.db.query(`
+        SELECT al.id_alert, c.id_customer,
+          CONCAT(c.first_name, ' ', c.last_name) AS customer_name,
+          pl.plan_name, al.alert_type,
+          DATE_FORMAT(al.reference_date, '%Y-%m-%d') AS reference_date,
+          DATE_FORMAT(al.created_at - INTERVAL 4 HOUR, '%Y-%m-%d %H:%i') AS created_at,
+          al.status
+        ${source}
+        ORDER BY al.status = 'PENDING' DESC, al.reference_date DESC, al.id_alert DESC
+        LIMIT ? OFFSET ?
+      `, [...params, limit, offset]);
+      const total = countValue(countRows?.[0]?.total);
+      return {
+        section, from, to,
+        summary: {
+          total,
+          byStatus: (summaryRows || []).map((row) => ({
+            type: String(row.type || '').toUpperCase(),
+            status: String(row.status || '').toUpperCase(),
+            total: countValue(row.total),
+          })),
+        },
+        data: rows || [],
+        total, page, limit, totalPages: Math.ceil(total / limit),
+      };
+    }
+
+    conditions.push('DATE(f.contact_date - INTERVAL 4 HOUR) BETWEEN ? AND ?');
+    params.push(from, to);
+    if (query.status !== undefined && query.status !== '') {
+      const status = String(query.status).toUpperCase();
+      if (!COMMERCIAL_FOLLOWUP_RESULTS.has(status)) {
+        throw new BadRequestException('Resultado de seguimiento inválido');
+      }
+      conditions.push('f.result = ?');
+      params.push(status);
+    }
+    if (query.result !== undefined && query.result !== '') {
+      const result = String(query.result).toUpperCase();
+      if (!COMMERCIAL_FOLLOWUP_RESULTS.has(result)) {
+        throw new BadRequestException('Resultado de seguimiento inválido');
+      }
+      conditions.push('f.result = ?');
+      params.push(result);
+    }
+    if (query.reason !== undefined && query.reason !== '') {
+      const reason = String(query.reason).toUpperCase();
+      if (!COMMERCIAL_FOLLOWUP_REASONS.has(reason)) {
+        throw new BadRequestException('Motivo de seguimiento inválido');
+      }
+      conditions.push('f.reason = ?');
+      params.push(reason);
+    }
+    if (search) {
+      conditions.push(`(
+        CAST(c.id_customer AS CHAR) LIKE ?
+        OR CONCAT(c.first_name, ' ', c.last_name) LIKE ?
+      )`);
+      params.push(`%${search}%`, `%${search}%`);
+    }
+    const where = `WHERE ${conditions.join(' AND ')}`;
+    const source = `FROM erp_commercial_followups f
+      JOIN customers c ON c.id_customer = f.id_customer
+      LEFT JOIN memberships m ON m.id_membership = f.id_membership
+      LEFT JOIN membership_plans pl ON pl.id_plan = m.id_plan
+      ${where}`;
+    const [summaryRows] = await this.db.query(`
+      SELECT f.result, COUNT(*) AS total
+      ${source}
+      GROUP BY f.result
+      ORDER BY f.result
+    `, params);
+    const [countRows] = await this.db.query(`SELECT COUNT(*) AS total ${source}`, params);
+    const [rows] = await this.db.query(`
+      SELECT f.id_followup, c.id_customer,
+        CONCAT(c.first_name, ' ', c.last_name) AS customer_name,
+        pl.plan_name, f.reason, f.contact_method, f.result,
+        DATE_FORMAT(f.contact_date - INTERVAL 4 HOUR, '%Y-%m-%d %H:%i') AS contact_date,
+        DATE_FORMAT(f.next_action_at - INTERVAL 4 HOUR, '%Y-%m-%d %H:%i') AS next_action_at
+      ${source}
+      ORDER BY f.contact_date DESC, f.id_followup DESC
+      LIMIT ? OFFSET ?
+    `, [...params, limit, offset]);
+    const total = countValue(countRows?.[0]?.total);
+    return {
+      section, from, to,
+      summary: {
+        total,
+        byResult: (summaryRows || []).map((row) => ({
+          result: String(row.result || '').toUpperCase(),
+          total: countValue(row.total),
+        })),
+      },
+      data: rows || [],
+      total, page, limit, totalPages: Math.ceil(total / limit),
     };
   }
 }
